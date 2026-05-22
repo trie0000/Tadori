@@ -1,13 +1,9 @@
 // テスト用シードデータ投入 (開発者モード)。
-// サンプルメールを Voyage で埋め込み、Float16 Base64 にして SharePoint List へ作成する。
-// List 側に Body / From / embedding 列が存在している前提。
+// サンプルメールを埋め込んでセグメント化し、SharePoint のベクトルDB(セグメント)へ
+// 書き込む (新方式)。message-id は合成。
 
 import type { RuntimeSettings } from '../api/aiSettings';
-import { SharePointClient } from '../sharepoint/client';
-import { embedDocsFor } from '../embeddings/router';
-import { encodeEmbedding } from '../lib/float16';
-import { normalize } from '../search/cosine';
-import { COLUMNS, TADORI_LIST_FIELDS } from '../config';
+import { ingestToSegments, type IngestMail } from '../db/writer';
 
 export interface SampleMail {
   subject: string;
@@ -35,61 +31,28 @@ export const SAMPLE_MAILS: SampleMail[] = [
 ];
 
 export interface SeedResult {
-  created: number;
-  /** 埋め込みまで付けられたか (false なら本文のみ投入 = まだ検索対象外)。 */
-  embedded: boolean;
-  errors: string[];
+  added: number;
+  skipped: number;
+  segments: number;
 }
 
-/** サンプルメールを List に投入する。onProgress で進捗を通知。 */
+/** サンプルメールをベクトルDB(セグメント)へ投入。onProgress で進捗を通知。 */
 export async function seedTestData(
   s: RuntimeSettings,
   siteUrl: string,
   onProgress?: (done: number, total: number) => void,
 ): Promise<SeedResult> {
-  const sp = new SharePointClient(siteUrl);
-  const total = SAMPLE_MAILS.length;
+  const base = new Date('2026-04-01T00:00:00Z').getTime();
+  const mails: IngestMail[] = SAMPLE_MAILS.map((m, i) => ({
+    messageId: `<seed-${i}@tadori.local>`,
+    subject: m.subject,
+    from: m.from,
+    to: ['ml@example.co.jp'],
+    cc: [],
+    date: new Date(base + i * 86400000).toISOString(),
+    body: m.body,
+  }));
 
-  // リストが無ければ自動作成 (列も追加)
-  await sp.ensureList(s.listTitle, TADORI_LIST_FIELDS);
-
-  // 埋め込みは best-effort: プロバイダ未設定/失敗でも本文だけは投入する。
-  let vecs: Float32Array[] | null = null;
-  try {
-    vecs = await embedDocsFor(SAMPLE_MAILS.map(m => m.body), s);
-  } catch (e) {
-    console.warn('[tadori] seed: 埋め込みをスキップ (本文のみ投入):', (e as Error).message);
-    vecs = null;
-  }
-
-  const errors: string[] = [];
-  let created = 0;
-  const now = new Date().toISOString();
-
-  for (let i = 0; i < total; i++) {
-    const m = SAMPLE_MAILS[i];
-    const fields: Record<string, unknown> = {
-      Title: m.subject,
-      Body: m.body,
-      From: m.from,
-      [COLUMNS.isMl]: true,
-    };
-    if (vecs) {
-      fields[COLUMNS.embedding] = encodeEmbedding(normalize(vecs[i]));
-      fields[COLUMNS.embeddedAt] = now;
-      fields[COLUMNS.ragStatus] = 'indexed';
-    } else {
-      // 埋め込み未付与 = まだ検索対象外。後でプロバイダ設定後に再投入で埋め込まれる。
-      fields[COLUMNS.ragStatus] = 'pending';
-    }
-    try {
-      await sp.createItem(s.listTitle, fields);
-      created++;
-    } catch (e) {
-      errors.push(`${m.subject}: ${e instanceof Error ? e.message : String(e)}`);
-    }
-    onProgress?.(i + 1, total);
-  }
-
-  return { created, embedded: vecs !== null, errors };
+  const r = await ingestToSegments(mails, s, siteUrl, (_phase, done, total) => onProgress?.(done, total));
+  return { added: r.added, skipped: r.skipped, segments: r.segments };
 }

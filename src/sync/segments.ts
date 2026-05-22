@@ -44,6 +44,8 @@ export interface Manifest {
   version: number;
   /** コンパクション世代。変わったら relay は集合を作り直す。 */
   generation: number;
+  /** 全レコードを通して単調増加する適用順の現在値 (次は maxSeq+1)。 */
+  maxSeq: number;
   /** 封印済みセグメント id (不変・一度DLしたら再取得しない)。 */
   sealed: string[];
   /** 追記中セグメント (小・hash 変化で再取得)。無ければ null。 */
@@ -55,7 +57,21 @@ export interface Manifest {
 export const SEGMENT_CAP = 1000; // 1 セグメントの最大レコード数 (封印トリガ)
 
 export function emptyManifest(): Manifest {
-  return { version: 0, generation: 1, sealed: [], open: null, updatedAt: new Date().toISOString() };
+  return { version: 0, generation: 1, maxSeq: 0, sealed: [], open: null, updatedAt: new Date().toISOString() };
+}
+
+/** sealed の `seg-NNNNN` から次のセグメント番号を返す (無ければ 1)。 */
+export function nextSegmentIndex(sealed: string[]): number {
+  let max = 0;
+  for (const id of sealed) {
+    const m = /(\d+)$/.exec(id);
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return max + 1;
+}
+
+export function segmentId(index: number): string {
+  return 'seg-' + String(index).padStart(5, '0');
 }
 
 export function serializeSegment(seg: Segment): string {

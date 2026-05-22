@@ -27,6 +27,7 @@
 <script>
 // ─── dist/tadori.js が走る前にモックを仕込む ────────────────────────────────
 window._spPageContextInfo = { webAbsoluteUrl: location.origin };
+window.__spFiles = {}; // 疑似 SharePoint ファイルストア (セグメント/manifest)
 
 // float16 エンコーダ (src/lib/float16.ts と同等)
 function f32ToF16Bits(value) {
@@ -160,19 +161,24 @@ window.fetch = async (url, opts) => {
     return jsonResponse({ ok: true, count: mails.length, mails });
   }
 
-  // ベクトルDB セグメント (新方式): manifest と seg-*.json を返す
+  // ベクトルDB セグメント (新方式) — ステートフルな疑似ファイルストア
+  // (PUT で保存・GET で返す)。最初は空 → 投入で manifest/seg が作られる。
+  if (u.includes('/folders/addUsingPath')) return jsonResponse({ ok: true }); // ensureFolder
+  if (u.includes('GetFolderByServerRelativeUrl') && u.includes('/Files/add')) {
+    const m = u.match(/add\(url='([^']+)'/);
+    const name = m ? decodeURIComponent(m[1]) : null;
+    if (name) window.__spFiles[name] = (opts && opts.body) ? String(opts.body) : '';
+    return jsonResponse({ ok: true });
+  }
+  if (u.includes('GetFolderByServerRelativeUrl') && u.includes('/Files?')) {
+    const value = Object.keys(window.__spFiles).filter(n => n.startsWith('seg-')).map(Name => ({ Name }));
+    return jsonResponse({ value });
+  }
   if (u.includes('GetFileByServerRelativeUrl')) {
-    if (u.includes('manifest.json')) {
-      return jsonResponse({ version: 1, generation: 1, sealed: ['seg-00001'], open: null, updatedAt: new Date().toISOString() });
-    }
-    if (u.includes('seg-00001')) {
-      const items = await buildListItems();
-      const records = items.map((m, i) => ({
-        seq: i + 1, op: 'upsert', messageId: '<' + m.Id + '@example>',
-        subject: m.Title, from: m.From, to: ['ml@example.co.jp'], cc: [], date: m.Created, body: m.Body,
-        emb: m.embedding,
-      }));
-      return new Response(JSON.stringify({ id: 'seg-00001', generation: 1, records }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    const m = u.match(/GetFileByServerRelativeUrl\('([^']+)'\)/);
+    const name = m ? decodeURIComponent(m[1]).split('/').pop() : null;
+    if (name && window.__spFiles[name] != null) {
+      return new Response(window.__spFiles[name], { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
     return new Response('', { status: 404 });
   }

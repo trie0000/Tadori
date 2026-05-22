@@ -36,6 +36,8 @@ export class VectorDb {
   get size(): number { return this.records.size; }
   get watermark(): number { return this.maxSeq; }
 
+  has(messageId: string): boolean { return this.records.has(messageId); }
+
   applySegment(seg: Segment): void {
     const recs = [...seg.records].sort((a, b) => a.seq - b.seq);
     for (const r of recs) this.applyRecord(r);

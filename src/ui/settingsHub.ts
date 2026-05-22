@@ -261,10 +261,9 @@ function buildOutlookImport(pane: HTMLElement, draft: RuntimeSettings, root: HTM
           status.textContent = '該当するメールがありませんでした (条件・期間を確認)';
           toast(root, '該当メール 0 件', 'warn');
         } else {
-          const note = r.embedded ? '埋め込み済み・検索可能' : '本文のみ (プロバイダ未設定)';
-          status.textContent = `取得 ${r.fetched} 件 / 投入 ${r.created} 件 (${note})` + (r.errors.length ? ` / ${r.errors.length} 件失敗` : '');
-          toast(root, `Outlook から ${r.created} 件取り込みました`, r.errors.length ? 'error' : 'ok');
-          if (r.errors.length) console.warn('[tadori/import] errors:', r.errors);
+          const dup = r.skipped ? ` / 重複スキップ ${r.skipped} 件` : '';
+          status.textContent = `取得 ${r.fetched} 件 / 新規 ${r.added} 件 (セグメント ${r.segments})${dup}`;
+          toast(root, `Outlook から ${r.added} 件取り込みました`, 'ok');
         }
       } catch (e) {
         status.textContent = '失敗';
@@ -369,20 +368,17 @@ function buildDevPane(
   const seedBtn = el('button', { class: 'tdr-btn tdr-btn--primary' }, ['サンプルメールを投入']);
 
   seedBtn.addEventListener('click', () => {
-    if (!confirm(`List「${draft.listTitle}」に ${SAMPLE_MAILS.length} 件のテストメールを作成します。よろしいですか?`)) return;
+    if (!confirm(`ベクトルDBに ${SAMPLE_MAILS.length} 件のサンプルメールを投入します。よろしいですか?`)) return;
     seedBtn.disabled = true;
     status.textContent = '投入中…';
     void (async () => {
       try {
         const r = await seedTestData(draft, siteUrl, (done, total) => {
-          status.textContent = `投入中… ${done}/${total}`;
+          status.textContent = total ? `投入中… ${done}/${total}` : '投入中…';
         });
-        const note = r.embedded
-          ? '埋め込み済み・検索可能'
-          : '本文のみ (埋め込みプロバイダ未設定 — 検索するにはプロバイダ設定後に再投入)';
-        status.textContent = `完了: ${r.created} 件作成 (${note})` + (r.errors.length ? ` / ${r.errors.length} 件失敗` : '');
-        toast(root, `テストデータ ${r.created} 件を投入しました (${r.embedded ? '埋め込み済み' : '本文のみ'})`, r.errors.length ? 'error' : 'ok');
-        if (r.errors.length) console.warn('[tadori/seed] errors:', r.errors);
+        const dup = r.skipped ? ` / 重複スキップ ${r.skipped} 件` : '';
+        status.textContent = `完了: 新規 ${r.added} 件 (セグメント ${r.segments})${dup}`;
+        toast(root, `サンプル ${r.added} 件を投入しました`, 'ok');
       } catch (e) {
         status.textContent = '失敗';
         toast(root, `投入失敗: ${e instanceof Error ? e.message : String(e)}`, 'error');
