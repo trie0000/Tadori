@@ -118,7 +118,7 @@ function mkSelect(options: { value: string; label: string }[], current: string, 
 // ─── AI 接続 ──────────────────────────────────────────────────────────────────
 
 function buildAiPane(pane: HTMLElement, draft: RuntimeSettings): void {
-  paneHead(pane, 'AI 接続', '★ Spira と共有される設定です。どちらで変更しても両方のツールに反映されます。');
+  paneHead(pane, 'AI 設定', '★ Spira と共有される設定です。どちらで変更しても両方のツールに反映されます。');
   const dev = isDeveloperMode();
 
   // dev OFF なのに claude が選ばれていたら corp に丸める
