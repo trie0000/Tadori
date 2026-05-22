@@ -1,11 +1,28 @@
-// メール本文のクリーニング (引用・署名除去 + 長さ制限)。取込/インポート共通。
+// メール本文のクリーニング (返信履歴・署名の除去 + 長さ制限)。取込/インポート共通。
+// 方針: 本文中の「> 引用」はベクトル化対象として残す。落とすのは「前回返信の履歴」
+// (帰属行/ヘッダブロック/区切り線) 以降だけ。
+
+// 返信履歴・署名の開始を示す行。最初に一致した行以降を丸ごと落とす。
+const REPLY_MARKERS: RegExp[] = [
+  /^\s*-{2,}\s*$/,                                                  // 署名区切り (-- など)
+  /^\s*_{5,}\s*$/,                                                  // Outlook の罫線 ____
+  /^\s*[-=]{3,}\s*(Original Message|元のメッセージ|転送されたメッセージ).*$/i,
+  /^\s*(From|差出人|送信者|Sent|送信日時|To|宛先|Cc|Subject|件名)\s*[:：]/i,  // 返信ヘッダブロック
+  /^\s*On\b.*\bwrote\s*[:：]?\s*$/i,                                // On <date>, <name> wrote:
+  /^.{0,80}(さんは|より|から).{0,40}(書きました|送信されました|次のように).*[:：]?\s*$/, // 〜さんは…と書きました：
+  /^\s*\d{4}年\d{1,2}月\d{1,2}日.*[:：]\s*$/,                       // 2026年5月20日(火) … :
+  /^\s*\d{4}[-/]\d{1,2}[-/]\d{1,2}\b.*\bwrote\s*[:：]?\s*$/i,       // 2026-05-20 ... wrote:
+];
 
 export function cleanBody(raw: string): string {
-  let t = (raw ?? '').replace(/\r\n/g, '\n');
-  // 返信ヘッダ (From:/差出人:/送信者: 以降) や区切り線以降をカット
-  const m = t.search(/\n-{2,}\s*\n|^(From|差出人|送信者):.*$/m);
-  if (m > 0) t = t.slice(0, m);
-  // 引用行 (> ...) を除去
-  t = t.split('\n').filter(l => !/^\s*>/.test(l)).join('\n');
-  return t.trim().slice(0, 8000);
+  const lines = (raw ?? '').replace(/\r\n?/g, '\n').split('\n');
+
+  // 返信履歴の開始行を探す (先頭行は本文とみなして対象外)。
+  let cut = lines.length;
+  for (let i = 1; i < lines.length; i++) {
+    if (REPLY_MARKERS.some(re => re.test(lines[i]))) { cut = i; break; }
+  }
+
+  // cut 以降 (= 返信履歴) を捨て、それより前は引用行も含めてそのまま残す。
+  return lines.slice(0, cut).join('\n').trim().slice(0, 8000);
 }

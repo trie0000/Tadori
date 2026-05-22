@@ -90,7 +90,7 @@ export async function ingestToSegments(
     // 埋め込みは本文のテキストで行う。HTML 本文はタグを除いてテキスト抽出。
     // 空 (引用/署名のみ等) は埋め込み API が空文字を拒否するため件名へフォールバック。
     const bodies = b.map(m => {
-      const text = m.isHtml ? htmlToText(m.body) : cleanBody(m.body);
+      const text = m.isHtml ? cleanBody(htmlToText(m.body)) : cleanBody(m.body);
       return text || (m.subject || '').trim() || '(本文なし)';
     });
     return embedDocsFor(bodies, s, signal);
