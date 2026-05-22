@@ -1,7 +1,13 @@
 // Azure OpenAI 埋め込みクライアント。PoC 02 で動作確認済みの経路。
 // ブラウザ → 中継サーバ (loopback) → 社内プロキシ → Azure OpenAI。
 
-import type { TadoriConfig } from '../config';
+/** 埋め込みに必要な設定の最小集合 (TadoriConfig / RuntimeSettings 双方が満たす)。 */
+export interface EmbedConfig {
+  relayBaseUrl: string;
+  embeddingDeployment: string;
+  apiVersion: string;
+  dimensions: number;
+}
 
 export interface EmbedAuth {
   /** api-key ヘッダ方式 (サブスクリプションキー)。 */
@@ -14,7 +20,7 @@ export interface EmbedAuth {
  *  入力順と出力順は Azure OpenAI 仕様で対応 (data[].index で保証)。 */
 export async function embedTexts(
   texts: string[],
-  cfg: TadoriConfig,
+  cfg: EmbedConfig,
   auth: EmbedAuth,
 ): Promise<Float32Array[]> {
   if (texts.length === 0) return [];
@@ -48,7 +54,7 @@ export async function embedTexts(
 /** 単一クエリの埋め込み (検索時に使用)。 */
 export async function embedQuery(
   text: string,
-  cfg: TadoriConfig,
+  cfg: EmbedConfig,
   auth: EmbedAuth,
 ): Promise<Float32Array> {
   const [v] = await embedTexts([text], cfg, auth);

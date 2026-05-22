@@ -1,0 +1,123 @@
+/* Tadori app CSS — Spira トークン流用。#tadori-root に all:initial で host を遮断。 */
+#tadori-root{
+  all: initial;
+  --ink:#2a2a26; --ink-3:#7a766c; --ink-4:#a8a39a;
+  --paper:#fafaf7; --paper-2:#f3f1ea; --paper-2-strong:#ece8de; --paper-3:#e8e4d8;
+  --line:rgba(42,42,38,.12); --line-strong:rgba(42,42,38,.18);
+  --accent:#7a8a78; --accent-soft:rgba(122,138,120,.18); --accent-strong:#5e6f5c;
+  --danger:#b8534a; --danger-soft:rgba(184,83,74,.12); --warn:#c47f1c; --ok:#2f6f5e; --ok-soft:rgba(47,111,94,.12);
+  --hl:rgba(196,174,96,.45);
+  --font-sans:"Meiryo","メイリオ","Hiragino Sans","Yu Gothic UI",-apple-system,"Segoe UI",system-ui,sans-serif;
+  --font-mono:ui-monospace,"Cascadia Mono","Consolas",monospace;
+  --fs-xs:11px; --fs-sm:12px; --fs-md:13px; --fs-base:15px; --fs-lg:16px; --fs-xl:18px;
+  --lh-base:1.75;
+  --s-1:4px; --s-2:6px; --s-3:8px; --s-4:10px; --s-5:12px; --s-6:14px; --s-7:18px; --s-8:22px; --s-9:28px; --s-10:40px;
+  --r-1:2px; --r-2:4px; --r-3:6px; --r-4:8px;
+  --shadow-modal:0 0 0 1px rgba(42,42,38,.06),0 4px 12px rgba(42,42,38,.10),0 16px 40px rgba(42,42,38,.18);
+  --topbar-h:44px; --gutter:24px; --thread-w:760px;
+  --z-overlay:2147483600; --z-modal:2147483700; --z-toast:2147483800;
+  font-family:var(--font-sans); font-size:var(--fs-base); line-height:var(--lh-base); color:var(--ink);
+  position:fixed; inset:0; z-index:2147483600; display:flex; flex-direction:column; background:var(--paper);
+}
+#tadori-root[data-theme="dark"]{
+  --ink:#e8e4d8; --ink-3:#a8a39a; --ink-4:#7a766c;
+  --paper:#1d1b18; --paper-2:#25231f; --paper-2-strong:#2c2a25; --paper-3:#3a3731;
+  --line:rgba(232,228,216,.14); --line-strong:rgba(232,228,216,.22);
+}
+#tadori-root *{box-sizing:border-box;}
+#tadori-root svg{display:block;}
+
+#tadori-root .tdr-topbar{display:flex;align-items:center;gap:var(--s-4);height:var(--topbar-h);
+  padding:0 var(--gutter);border-bottom:1px solid var(--line);background:var(--paper);flex:0 0 auto;}
+#tadori-root .tdr-brand{display:flex;align-items:center;gap:var(--s-3);font-size:var(--fs-lg);font-weight:600;}
+#tadori-root .tdr-brand .mark{font-family:var(--font-mono);color:var(--accent-strong);font-size:var(--fs-xl);}
+#tadori-root .tdr-brand .sub{font-size:var(--fs-xs);color:var(--ink-3);font-weight:400;}
+#tadori-root .tdr-spacer{flex:1;}
+
+#tadori-root .tdr-thread{flex:1;min-height:0;overflow:auto;padding:var(--gutter) var(--gutter) var(--s-7);}
+#tadori-root .tdr-turn{max-width:var(--thread-w);margin:0 auto var(--s-9);}
+#tadori-root .tdr-q{margin-left:auto;max-width:80%;width:fit-content;background:var(--accent-soft);
+  color:var(--ink);padding:var(--s-4) var(--s-5);border-radius:var(--r-4) var(--r-4) var(--r-1) var(--r-4);font-size:var(--fs-base);}
+#tadori-root .tdr-a{display:flex;gap:var(--s-4);margin-top:var(--s-6);}
+#tadori-root .tdr-a-avatar{flex:0 0 auto;width:28px;height:28px;border-radius:50%;background:var(--accent-soft);
+  color:var(--accent-strong);font-family:var(--font-mono);font-size:var(--fs-base);display:flex;align-items:center;justify-content:center;}
+#tadori-root .tdr-a-body{flex:1;min-width:0;}
+#tadori-root .tdr-answer{font-size:var(--fs-base);color:var(--ink);line-height:1.85;}
+#tadori-root .tdr-answer .cite{font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--accent-strong);
+  background:var(--accent-soft);border-radius:var(--r-1);padding:0 4px;margin:0 1px;cursor:pointer;vertical-align:1px;}
+#tadori-root .tdr-a-meta{display:flex;align-items:center;gap:var(--s-4);margin:var(--s-4) 0 var(--s-3);font-size:var(--fs-sm);color:var(--ink-3);}
+#tadori-root .tdr-a-meta .mono,#tadori-root .tdr-q .mono{font-family:var(--font-mono);}
+#tadori-root .tdr-sources-h{display:flex;align-items:center;gap:var(--s-3);margin:var(--s-6) 0 var(--s-3);font-size:var(--fs-sm);color:var(--ink-3);cursor:pointer;}
+#tadori-root .tdr-sources-h svg{transition:transform .15s;}
+#tadori-root .tdr-sources-h.collapsed svg{transform:rotate(-90deg);}
+#tadori-root .tdr-sources.collapsed{display:none;}
+#tadori-root .tdr-hit{padding:var(--s-5);border:1px solid var(--line);border-radius:var(--r-3);margin-bottom:var(--s-3);cursor:pointer;background:var(--paper);}
+#tadori-root .tdr-hit:hover{background:var(--paper-2);border-color:var(--line-strong);}
+#tadori-root .tdr-hit.is-open{background:var(--paper-2);border-color:var(--line-strong);}
+#tadori-root .tdr-hit-head{display:flex;align-items:center;gap:var(--s-3);}
+#tadori-root .tdr-hit-num{flex:0 0 auto;font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--accent-strong);background:var(--accent-soft);width:20px;height:20px;border-radius:var(--r-1);display:inline-flex;align-items:center;justify-content:center;}
+#tadori-root .tdr-hit-subject{font-size:var(--fs-base);font-weight:600;color:var(--ink);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+#tadori-root .tdr-hit-score{font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--accent-strong);background:var(--accent-soft);padding:2px 6px;border-radius:var(--r-1);flex:0 0 auto;}
+#tadori-root .tdr-hit-from{font-size:var(--fs-sm);color:var(--ink-3);margin-top:var(--s-1);}
+#tadori-root .tdr-hit-snippet{font-size:var(--fs-md);color:var(--ink);margin-top:var(--s-2);line-height:1.6;}
+#tadori-root .tdr-hit mark{background:var(--hl);color:inherit;border-radius:2px;padding:0 1px;}
+#tadori-root .tdr-hit-detail{margin-top:var(--s-5);padding-top:var(--s-5);border-top:1px solid var(--line);font-size:var(--fs-md);color:var(--ink);line-height:1.8;white-space:pre-wrap;}
+#tadori-root .tdr-empty{max-width:var(--thread-w);margin:10vh auto 0;text-align:center;color:var(--ink-3);}
+#tadori-root .tdr-empty .big{font-size:var(--fs-xl);color:var(--ink);margin-bottom:var(--s-3);}
+
+#tadori-root .tdr-composer{flex:0 0 auto;border-top:1px solid var(--line);background:var(--paper);padding:var(--s-5) var(--gutter) var(--s-7);}
+#tadori-root .tdr-note-form{position:relative;line-height:0;max-width:var(--thread-w);margin:0 auto;}
+#tadori-root .tdr-note-input{width:100%;min-height:48px;max-height:40vh;padding:14px 56px 14px 16px;resize:none;font-family:inherit;font-size:var(--fs-base);line-height:1.6;color:var(--ink);background:var(--paper-2);border:1px solid var(--line);border-radius:var(--r-3);outline:none;}
+#tadori-root .tdr-note-input:focus{background:var(--paper);border-color:var(--line-strong);}
+#tadori-root .tdr-note-input::placeholder{color:var(--ink-4);}
+#tadori-root .tdr-note-submit{position:absolute;right:10px;bottom:9px;width:30px;height:30px;border:none;background:var(--accent);color:#fff;border-radius:var(--r-2);cursor:pointer;display:flex;align-items:center;justify-content:center;}
+#tadori-root .tdr-note-submit:hover{background:var(--accent-strong);}
+#tadori-root .tdr-note-submit:disabled{opacity:.4;cursor:default;}
+#tadori-root .tdr-note-hint{max-width:var(--thread-w);margin:var(--s-2) auto 0;font-size:var(--fs-xs);color:var(--ink-4);line-height:1;}
+
+#tadori-root .tdr-pill{display:inline-flex;align-items:center;gap:var(--s-2);height:26px;padding:0 10px;font-size:var(--fs-sm);border-radius:99px;border:1px solid var(--line-strong);background:var(--paper-2);color:var(--ink-3);}
+#tadori-root .tdr-pill .dot{width:7px;height:7px;border-radius:50%;background:var(--ok);}
+#tadori-root .tdr-pill.is-off .dot{background:var(--ink-4);}
+#tadori-root .tdr-pill .mono{font-family:var(--font-mono);color:var(--ink);}
+#tadori-root .tdr-btn{height:34px;padding:0 var(--s-7);font-size:var(--fs-md);font-family:inherit;border-radius:var(--r-2);border:1px solid var(--line-strong);background:var(--paper-2);color:var(--ink);cursor:pointer;display:inline-flex;align-items:center;gap:var(--s-2);}
+#tadori-root .tdr-btn:hover{background:var(--paper-2-strong);}
+#tadori-root .tdr-btn--primary{background:var(--accent);border-color:var(--accent);color:#fff;}
+#tadori-root .tdr-btn--primary:hover{background:var(--accent-strong);border-color:var(--accent-strong);}
+#tadori-root .tdr-btn--ghost{background:transparent;border-color:transparent;color:var(--ink-3);}
+#tadori-root .tdr-btn--ghost:hover{background:var(--paper-2);}
+#tadori-root .tdr-iconbtn{width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;border:none;background:transparent;color:var(--ink-3);border-radius:var(--r-2);cursor:pointer;}
+#tadori-root .tdr-iconbtn:hover{background:var(--paper-2);color:var(--ink);}
+
+#tadori-root .tdr-backdrop{position:fixed;inset:0;z-index:2147483700;background:rgba(15,15,15,.45);backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;padding:var(--s-7);}
+#tadori-root .tdr-modal{background:var(--paper);border:1px solid var(--line-strong);border-radius:var(--r-3);box-shadow:var(--shadow-modal);width:100%;max-width:760px;max-height:calc(100vh - var(--s-10));display:flex;flex-direction:column;overflow:hidden;}
+#tadori-root .tdr-modal--sm{max-width:480px;}
+#tadori-root .tdr-modal-header{display:flex;align-items:center;gap:var(--s-3);padding:var(--s-7) var(--s-7) var(--s-5);}
+#tadori-root .tdr-modal-title{font-size:var(--fs-lg);font-weight:600;margin:0;}
+#tadori-root .tdr-modal-footer{display:flex;justify-content:flex-end;gap:var(--s-3);padding:var(--s-5) var(--s-7) var(--s-7);}
+
+/* 設定ハブ: 左ナビ + 右ペイン */
+#tadori-root .tdr-hub{display:flex;flex:1;min-height:0;}
+#tadori-root .tdr-hub-nav{width:200px;flex:0 0 auto;border-right:1px solid var(--line);padding:var(--s-3);overflow:auto;}
+#tadori-root .tdr-hub-navitem{display:flex;align-items:center;gap:var(--s-3);padding:var(--s-3) var(--s-4);border-radius:var(--r-2);font-size:var(--fs-md);color:var(--ink);cursor:pointer;}
+#tadori-root .tdr-hub-navitem:hover{background:var(--paper-2);}
+#tadori-root .tdr-hub-navitem.is-active{background:var(--accent-soft);color:var(--accent-strong);font-weight:600;}
+#tadori-root .tdr-hub-pane{flex:1;min-width:0;padding:var(--s-7);overflow:auto;}
+#tadori-root .tdr-pane-title{font-size:var(--fs-md);font-weight:600;color:var(--ink-3);margin:0 0 var(--s-6);}
+
+#tadori-root .tdr-fieldgrid{display:grid;grid-template-columns:130px minmax(0,1fr);gap:var(--s-3) var(--s-4);align-items:center;}
+#tadori-root .tdr-fieldgrid > label{color:var(--ink-3);font-size:var(--fs-sm);justify-self:end;text-align:right;white-space:nowrap;}
+#tadori-root .tdr-fieldgrid > label.top{align-self:start;padding-top:8px;}
+#tadori-root .tdr-input{width:100%;height:32px;padding:0 10px;font-size:var(--fs-md);font-family:inherit;color:var(--ink);background:var(--paper-2);border:1px solid var(--line);border-radius:var(--r-2);outline:none;}
+#tadori-root .tdr-input:focus{background:var(--paper);border-color:var(--line-strong);}
+#tadori-root textarea.tdr-input{height:auto;padding:8px 10px;resize:vertical;line-height:1.6;}
+#tadori-root select.tdr-input{height:32px;}
+#tadori-root .tdr-hint{grid-column:2;font-size:var(--fs-xs);color:var(--ink-3);line-height:1.6;margin:0;}
+#tadori-root .tdr-shared-note{grid-column:1 / -1;font-size:var(--fs-xs);color:var(--ink-3);background:var(--paper-2);border:1px solid var(--line);border-radius:var(--r-2);padding:var(--s-3) var(--s-4);line-height:1.6;}
+
+#tadori-root .tdr-diag{display:flex;align-items:center;gap:var(--s-3);padding:var(--s-3) 0;border-bottom:1px solid var(--line);font-size:var(--fs-md);}
+#tadori-root .tdr-diag .stat{font-family:var(--font-mono);font-size:var(--fs-sm);margin-left:auto;}
+#tadori-root .tdr-diag .ok{color:var(--ok);} #tadori-root .tdr-diag .ng{color:var(--danger);}
+
+/* toast */
+#tadori-root .tdr-toast-stack{position:fixed;top:var(--s-7);right:var(--s-7);z-index:2147483800;display:flex;flex-direction:column;gap:var(--s-3);}
+#tadori-root .tdr-toast{background:var(--paper);border:1px solid var(--line-strong);border-radius:var(--r-2);box-shadow:var(--shadow-modal);padding:var(--s-4) var(--s-5);font-size:var(--fs-md);color:var(--ink);max-width:320px;}
