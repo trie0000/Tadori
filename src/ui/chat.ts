@@ -7,7 +7,7 @@ import { icons } from './icons';
 import { toast } from './toast';
 import { searchVectors } from '../search/vectorSearch';
 import { htmlToText, renderMailBody } from '../lib/mailhtml';
-import { generateAnswer, summarizeTitle, type RagSource } from '../rag/client';
+import { generateAnswer, type RagSource } from '../rag/client';
 import { loadSettings } from '../api/aiSettings';
 import { renderMarkdown } from '../lib/markdown';
 import { openMailInOutlook } from '../outlook/import';
@@ -180,27 +180,22 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
 
       let full = '';
       let firstDelta = true;
+      let aiTitle = '';
       await generateAnswer(q, sources, s, delta => {
         full += delta;
         if (firstDelta) { refs.answerText.textContent = ''; firstDelta = false; } // 「生成中」を消す
         refs.answerText.textContent = full; // ストリーム中はプレーン (タイプ感)
         scrollBottom();
-      }, abort.signal);
+      }, abort.signal, title => { aiTitle = title; });
 
       const ms = Math.round(performance.now() - t0);
       finalizeTurn(refs, full, hits, ms, s.relayBaseUrl);
 
       // 履歴へ保存 (MailHit は SavedHit と同形)。
       const saved = appendTurn(currentId, { q, answer: full, hits: hits as SavedHit[], ms });
+      // 新規セッションの最初の質問は、回答と同時に得たタイトル (TITLE 行) を採用。
+      if (saved.turns.length === 1 && aiTitle) setTitle(currentId, aiTitle);
       refreshList();
-
-      // 新規セッションの最初の質問はタイトルを AI 要約に置き換える。
-      if (saved.turns.length === 1) {
-        const sid = currentId;
-        void summarizeTitle(q, s).then(title => {
-          if (title) { setTitle(sid, title); refreshList(); }
-        }).catch(() => { /* 失敗時は既定タイトルのまま */ });
-      }
 
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') return;
