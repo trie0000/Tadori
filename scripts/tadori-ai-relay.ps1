@@ -333,8 +333,18 @@ function Read-MailItem {
     } catch { }
     $date = ''
     try { $date = $Item.ReceivedTime.ToString('o') } catch { }
+    # HTML メールは HTMLBody をそのまま渡し isHtml=true (表示時にクライアントで
+    # サニタイズ + HTML 描画)。それ以外はプレーン .Body。olFormatHTML=2。
+    $isHtml = $false
     $body = ''
-    try { $body = [string]$Item.Body } catch { }
+    try {
+        if ([int]$Item.BodyFormat -eq 2) {
+            $h = [string]$Item.HTMLBody
+            if ($h) { $body = $h; $isHtml = $true } else { $body = [string]$Item.Body }
+        } else {
+            $body = [string]$Item.Body
+        }
+    } catch { try { $body = [string]$Item.Body } catch { } }
     return @{
         messageId = [string]$mid
         subject   = [string]$Item.Subject
@@ -343,6 +353,7 @@ function Read-MailItem {
         cc        = @($ccList)
         date      = [string]$date
         body      = $body
+        isHtml    = [bool]$isHtml
     }
 }
 

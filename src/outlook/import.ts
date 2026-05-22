@@ -13,6 +13,7 @@ export interface OutlookMail {
   cc: string[];
   date: string;
   body: string;
+  isHtml?: boolean;
 }
 
 export interface ImportFilter {
@@ -53,5 +54,6 @@ export function toIngestMails(mails: OutlookMail[]): IngestMail[] {
     cc: m.cc ?? [],
     date: m.date,
     body: m.body,
+    isHtml: !!m.isHtml,
   }));
 }

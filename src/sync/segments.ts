@@ -21,8 +21,10 @@ export interface SegmentRecord {
   cc?: string[];
   /** 受信日時 (ISO)。SharePoint の Created とは別に実受信日を保持。 */
   date?: string;
-  /** クリーニング済み本文 (検索結果表示 + RAG 用)。 */
+  /** 表示用本文。isHtml なら HTML、そうでなければプレーンテキスト。 */
   body?: string;
+  /** body が HTML 形式か。true なら表示時に HTML レンダリング。 */
+  isHtml?: boolean;
   /** 埋め込みベクトル (Base64 Float16, src/lib/float16.ts)。 */
   emb?: string;
 }

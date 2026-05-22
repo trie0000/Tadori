@@ -19,6 +19,7 @@ export interface MailRecord {
   cc: string[];
   date: string;
   body: string;
+  isHtml: boolean;
   vec: Float32Array; // L2 正規化済み
 }
 
@@ -58,6 +59,7 @@ export class VectorDb {
         cc: r.cc ?? [],
         date: r.date ?? '',
         body: r.body ?? '',
+        isHtml: r.isHtml ?? false,
         vec: normalize(decodeEmbedding(r.emb)),
       });
     }

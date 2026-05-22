@@ -11,6 +11,7 @@ import { embedDocsFor } from '../embeddings/router';
 import { encodeEmbedding } from '../lib/float16';
 import { normalize } from '../search/cosine';
 import { cleanBody } from '../lib/mailtext';
+import { htmlToText } from '../lib/mailhtml';
 import {
   nextSegmentIndex, segmentId,
   type Segment, type SegmentRecord,
@@ -25,6 +26,8 @@ export interface IngestMail {
   cc: string[];
   date: string;
   body: string;
+  /** body が HTML 形式か。埋め込みは本文テキストを抽出して行う。 */
+  isHtml?: boolean;
 }
 
 export interface WriteResult {
@@ -80,9 +83,12 @@ export async function ingestToSegments(
   for (let off = 0; off < fresh.length; off += BATCH) {
     if (signal?.aborted) { cancelled = true; break; }
     const part = fresh.slice(off, off + BATCH);
-    // 本文が空 (引用/署名のみ等) のメールは埋め込み API が空文字を拒否するため、
-    // 件名にフォールバックして空文字を送らない。
-    const bodies = part.map(m => cleanBody(m.body) || (m.subject || '').trim() || '(本文なし)');
+    // 埋め込みは本文のテキストで行う。HTML 本文はタグを除いてテキスト抽出。
+    // 空 (引用/署名のみ等) は埋め込み API が空文字を拒否するため件名へフォールバック。
+    const bodies = part.map(m => {
+      const text = m.isHtml ? htmlToText(m.body) : cleanBody(m.body);
+      return text || (m.subject || '').trim() || '(本文なし)';
+    });
 
     let vecs: Float32Array[];
     try {
@@ -101,7 +107,9 @@ export async function ingestToSegments(
       to: m.to,
       cc: m.cc,
       date: m.date,
-      body: bodies[i],
+      // 表示用は元の本文 (HTML はそのまま、表示時にサニタイズ)。サイズは上限で抑える。
+      body: (m.body ?? '').slice(0, m.isHtml ? 30000 : 8000),
+      isHtml: !!m.isHtml,
       emb: encodeEmbedding(normalize(vecs[i])),
     }));
 

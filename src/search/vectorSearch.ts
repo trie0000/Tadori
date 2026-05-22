@@ -11,6 +11,7 @@ export interface MailHit {
   from: string;
   date: string;
   body: string;
+  isHtml: boolean;
   score: number;
 }
 
@@ -35,6 +36,7 @@ export async function searchVectors(
     from: record.from,
     date: record.date,
     body: record.body,
+    isHtml: record.isHtml,
     score,
   }));
 }

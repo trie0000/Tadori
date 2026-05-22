@@ -4,7 +4,8 @@
 import { el } from '../lib/dom';
 import { icons } from './icons';
 import { toast } from './toast';
-import { searchVectors } from '../search/vectorSearch';
+import { searchVectors, type MailHit } from '../search/vectorSearch';
+import { htmlToText, renderMailBody } from '../lib/mailhtml';
 import { generateAnswer, type RagSource } from '../rag/client';
 import { loadSettings } from '../api/aiSettings';
 import { renderMarkdown } from '../lib/markdown';
@@ -62,8 +63,10 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
         return;
       }
 
+      // RAG には本文をプレーンテキストで渡す (HTML はタグを除去)。
       const sources: RagSource[] = hits.map((h, i) => ({
-        n: i + 1, subject: h.subject, from: h.from, date: h.date, body: h.body,
+        n: i + 1, subject: h.subject, from: h.from, date: h.date,
+        body: h.isHtml ? htmlToText(h.body) : h.body,
       }));
 
       answerText.textContent = '';
@@ -88,7 +91,7 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
         el('span', { class: 'mono' }, [`${ms} ms`]),
       );
 
-      appendSources(aBody, sources, hits.map(h => h.score));
+      appendSources(aBody, hits);
 
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') return;
@@ -100,10 +103,10 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     }
   }
 
-  function appendSources(container: HTMLElement, sources: RagSource[], scores: number[]): void {
+  function appendSources(container: HTMLElement, hits: MailHit[]): void {
     const hdrEl  = el('div', { class: 'tdr-sources-h' }, [
       el('span', { html: icons.chevron(14) }),
-      el('span', {}, [`参照メール (${sources.length})`]),
+      el('span', {}, [`参照メール (${hits.length})`]),
     ]);
     const listEl = el('div', { class: 'tdr-sources' });
 
@@ -112,25 +115,27 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
       listEl.classList.toggle('collapsed');
     });
 
-    sources.forEach((src, i) => {
+    hits.forEach((h, i) => {
+      const plain = h.isHtml ? htmlToText(h.body) : h.body;
       const hitEl = el('div', { class: 'tdr-hit' });
       hitEl.appendChild(el('div', { class: 'tdr-hit-head' }, [
-        el('span', { class: 'tdr-hit-num' }, [String(src.n)]),
-        el('span', { class: 'tdr-hit-subject' }, [src.subject]),
-        el('span', { class: 'tdr-hit-score' }, [scores[i].toFixed(3)]),
+        el('span', { class: 'tdr-hit-num' }, [String(i + 1)]),
+        el('span', { class: 'tdr-hit-subject' }, [h.subject]),
+        el('span', { class: 'tdr-hit-score' }, [h.score.toFixed(3)]),
       ]));
       hitEl.appendChild(el('div', { class: 'tdr-hit-from' }, [
-        `${src.from}  ${src.date.slice(0, 10)}`,
+        `${h.from}  ${h.date.slice(0, 10)}`,
       ]));
       hitEl.appendChild(el('div', { class: 'tdr-hit-snippet' }, [
-        src.body.slice(0, 140) + (src.body.length > 140 ? '…' : ''),
+        plain.slice(0, 140) + (plain.length > 140 ? '…' : ''),
       ]));
 
       let detail: HTMLElement | null = null;
       hitEl.addEventListener('click', () => {
         hitEl.classList.toggle('is-open');
         if (!detail) {
-          detail = el('div', { class: 'tdr-hit-detail' }, [src.body]);
+          detail = el('div', { class: 'tdr-hit-detail' });
+          renderMailBody(detail, h.body, h.isHtml); // HTML はサニタイズ描画、プレーンは pre-wrap
           hitEl.appendChild(detail);
         } else {
           detail.hidden = !detail.hidden;
