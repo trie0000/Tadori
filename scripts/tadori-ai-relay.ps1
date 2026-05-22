@@ -220,6 +220,9 @@ function Add-CorsHeaders {
         'Access-Control-Allow-Headers',
         'Content-Type, api-key, Accept, Authorization, X-Requested-With, x-api-key'
     )
+    # Chrome の Private Network Access (PNA): https の公開オリジンから
+    # http://127.0.0.1 (private) へのリクエストはこのヘッダが無いと拒否される。
+    $Response.Headers.Add('Access-Control-Allow-Private-Network', 'true')
     $Response.Headers.Add('Access-Control-Max-Age', '86400')
 }
 
