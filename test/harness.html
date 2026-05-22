@@ -26,7 +26,7 @@
 
 <script>
 // ─── dist/tadori.js が走る前にモックを仕込む ────────────────────────────────
-window._spPageContextInfo = { webAbsoluteUrl: location.origin };
+window._spPageContextInfo = { webAbsoluteUrl: location.origin, userDisplayName: '山田 太郎', userEmail: 'yamada@example.co.jp', userLoginName: 'i:0#.f|membership|yamada@example.co.jp' };
 window.__spFiles = {}; // 疑似 SharePoint ファイルストア (セグメント/manifest)
 
 // float16 エンコーダ (src/lib/float16.ts と同等)
@@ -150,6 +150,10 @@ window.fetch = async (url, opts) => {
   // FormDigest (書き込みに必要) をモック
   if (u.includes('/_api/contextinfo')) {
     return jsonResponse({ FormDigestValue: 'harness-digest' });
+  }
+  // 現在ユーザー (右上のユーザー表示用)
+  if (u.includes('/_api/web/currentuser')) {
+    return jsonResponse({ Title: '山田 太郎', Email: 'yamada@example.co.jp', LoginName: 'i:0#.f|membership|yamada@example.co.jp' });
   }
   // Outlook インポート (relay) をモック: サンプルメールを返す
   if (u.includes('/tadori/outlook/import')) {

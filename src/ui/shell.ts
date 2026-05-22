@@ -47,6 +47,8 @@ export function boot(): void {
   settBtn.addEventListener('click', e => { e.stopPropagation(); openSettingsMenu(root, settBtn, siteUrl); });
   closeBtn.addEventListener('click', () => root.remove());
 
+  const userChip = createUserChip(siteUrl);
+
   const topbar = el('div', { class: 'tdr-topbar' }, [
     el('div', { class: 'tdr-brand' }, [
       el('span', { class: 'mark' }, ['辿']),
@@ -54,6 +56,7 @@ export function boot(): void {
       el('span', { class: 'sub' }, ['ML ナレッジサーチ']),
     ]),
     el('div', { class: 'tdr-spacer' }),
+    userChip,
     moonBtn,
     settBtn,
     closeBtn,
@@ -70,6 +73,38 @@ export function boot(): void {
     }
     localStorage.setItem(LAST_BUILD_KEY, __TADORI_BUILD_ID__);
   } catch { /* noop */ }
+}
+
+// ログインユーザー表示 (Spira 同様)。アバター(イニシャル) + 名前のチップ。
+// _spPageContextInfo を即時表示し、/_api/web/currentuser で名前を補正する。
+function createUserChip(siteUrl: string): HTMLElement {
+  const ctx = (window as unknown as {
+    _spPageContextInfo?: { userDisplayName?: string; userEmail?: string; userLoginName?: string };
+  })._spPageContextInfo;
+  let name = ctx?.userDisplayName || ctx?.userEmail || ctx?.userLoginName || '';
+
+  const avatar = el('span', { class: 'tdr-user-avatar' }, [(name || '?').slice(0, 1).toUpperCase()]);
+  const nameEl = el('span', { class: 'tdr-user-name' }, [name || 'ログイン情報なし']);
+  const chip = el('div', { class: 'tdr-user', title: name || 'ログイン情報なし' }, [avatar, nameEl]);
+
+  // currentuser で表示名を補正 (取れなければ _spPageContextInfo のまま)。
+  void (async () => {
+    try {
+      const res = await fetch(`${siteUrl}/_api/web/currentuser?$select=Title,Email,LoginName`, {
+        headers: { Accept: 'application/json;odata=nometadata' }, credentials: 'include',
+      });
+      if (!res.ok) return;
+      const u = await res.json() as { Title?: string; Email?: string; LoginName?: string };
+      const refined = u.Title || u.Email || u.LoginName || '';
+      if (!refined) return;
+      name = refined;
+      nameEl.textContent = refined;
+      avatar.textContent = refined.slice(0, 1).toUpperCase();
+      chip.title = u.Email && u.Title ? `${u.Title} <${u.Email}>` : refined;
+    } catch { /* 取得不能はフォールバック表示のまま */ }
+  })();
+
+  return chip;
 }
 
 // 歯車のドロップダウンメニュー (Spira 同様)。build 表示 + 設定 + 更新確認。
