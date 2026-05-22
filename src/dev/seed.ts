@@ -7,7 +7,7 @@ import { SharePointClient } from '../sharepoint/client';
 import { embedDocsFor } from '../embeddings/router';
 import { encodeEmbedding } from '../lib/float16';
 import { normalize } from '../search/cosine';
-import { COLUMNS } from '../config';
+import { COLUMNS, TADORI_LIST_FIELDS } from '../config';
 
 export interface SampleMail {
   subject: string;
@@ -47,6 +47,9 @@ export async function seedTestData(
 ): Promise<SeedResult> {
   const sp = new SharePointClient(siteUrl);
   const total = SAMPLE_MAILS.length;
+
+  // リストが無ければ自動作成 (列も追加)
+  await sp.ensureList(s.listTitle, TADORI_LIST_FIELDS);
 
   // まとめて埋め込み (provider に応じて Voyage / Azure)
   const vecs = await embedDocsFor(SAMPLE_MAILS.map(m => m.body), s);

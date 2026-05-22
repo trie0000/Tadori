@@ -51,3 +51,17 @@ export const COLUMNS = {
 } as const;
 
 export type RagStatus = 'claimed' | 'embedded' | 'indexed' | 'error';
+
+/** Tadori が使う List の列定義。ensureList での自動作成・列追加に使う。
+ *  Title / Created は組み込み列なので含めない。 */
+import type { FieldSpec } from './sharepoint/client';
+export const TADORI_LIST_FIELDS: FieldSpec[] = [
+  { name: 'Body', type: 'note' },
+  { name: 'From', type: 'text' },
+  { name: COLUMNS.embedding, type: 'note' },
+  { name: COLUMNS.isMl, type: 'boolean' },
+  { name: COLUMNS.ragStatus, type: 'text' },
+  { name: COLUMNS.claimedBy, type: 'text' },
+  { name: COLUMNS.claimedAt, type: 'datetime' },
+  { name: COLUMNS.embeddedAt, type: 'datetime' },
+];

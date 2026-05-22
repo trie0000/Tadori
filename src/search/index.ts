@@ -6,7 +6,7 @@ import { SharePointClient } from '../sharepoint/client';
 import { embedQueryFor } from '../embeddings/router';
 import { decodeEmbedding } from '../lib/float16';
 import { normalize, search as cosineSearch, type IndexedVector } from './cosine';
-import { COLUMNS } from '../config';
+import { COLUMNS, TADORI_LIST_FIELDS } from '../config';
 
 export interface MailHit {
   messageId: string;
@@ -46,6 +46,12 @@ async function loadIndex(sp: SharePointClient, s: RuntimeSettings): Promise<Inde
   return out;
 }
 
+/** getItems が「リストが存在しない」で失敗したかを判定。 */
+function isListMissing(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return /HTTP 404/.test(msg) || msg.includes('存在しません') || /does ?n.t exist/i.test(msg);
+}
+
 export async function searchMails(
   question: string,
   s: RuntimeSettings,
@@ -53,7 +59,21 @@ export async function searchMails(
   topK: number,
 ): Promise<MailHit[]> {
   const sp = new SharePointClient(siteUrl);
-  const index = await loadIndex(sp, s);
+
+  let index: IndexedMail[];
+  try {
+    index = await loadIndex(sp, s);
+  } catch (e) {
+    // リストが存在しない (404) なら自動作成し、データ投入を促す。
+    if (isListMissing(e)) {
+      await sp.ensureList(s.listTitle, TADORI_LIST_FIELDS);
+      throw new Error(
+        `リスト「${s.listTitle}」が無かったので作成しました。` +
+        `設定 → 開発者 → サンプル投入、または取り込みでデータを入れてから再検索してください。`,
+      );
+    }
+    throw e;
+  }
   if (index.length === 0) return [];
 
   const qvec = normalize(await embedQueryFor(question, s));
