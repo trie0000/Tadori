@@ -404,14 +404,17 @@ function Invoke-OutlookImport {
         }
 
         $results = New-Object System.Collections.ArrayList
-        # Inbox + 全サブフォルダを幅優先で走査 (ML はルールでサブフォルダ振り分けが多い)。
+        # 全ストア (メインメールボックス / アーカイブ / オンラインアーカイブ / PST) の
+        # ルートから全フォルダを幅優先で走査する。ローカルの「アーカイブ」は受信トレイの
+        # 外、オンラインアーカイブは別ストアなので、Inbox 配下だけだと拾えない。
         $queue = New-Object System.Collections.Queue
-        $queue.Enqueue($ns.GetDefaultFolder(6))  # olFolderInbox
-        while ($queue.Count -gt 0 -and $results.Count -lt $max) {
-            $folder = $queue.Dequeue()
+        foreach ($store in $ns.Folders) { $queue.Enqueue($store) }
+        $folders = 0
+        while ($queue.Count -gt 0 -and $results.Count -lt $max -and $folders -lt 5000) {
+            $folder = $queue.Dequeue(); $folders++
             try { foreach ($sf in $folder.Folders) { $queue.Enqueue($sf) } } catch { }
             $items = $null
-            try { $items = $folder.Items.Restrict($filter) } catch { continue }
+            try { $items = $folder.Items.Restrict($filter) } catch { continue }  # メール以外のフォルダは除外
             foreach ($it in $items) {
                 if ($results.Count -ge $max) { break }
                 try {
@@ -421,7 +424,7 @@ function Invoke-OutlookImport {
             }
         }
 
-        Write-Host ("[import] matched {0} mails (to=[{1}] cc=[{2}] {3}..{4})" -f $results.Count, ($toAddrs -join ','), ($ccAddrs -join ','), $sinceDt.ToString('yyyy-MM-dd'), $untilDt.AddDays(-1).ToString('yyyy-MM-dd'))
+        Write-Host ("[import] matched {0} mails / scanned {1} folders (to=[{2}] cc=[{3}] {4}..{5})" -f $results.Count, $folders, ($toAddrs -join ','), ($ccAddrs -join ','), $sinceDt.ToString('yyyy-MM-dd'), $untilDt.AddDays(-1).ToString('yyyy-MM-dd'))
         Send-Json -Response $response -Status 200 -Body @{ ok = $true; count = $results.Count; mails = @($results) }
     }
     catch {
