@@ -214,4 +214,68 @@ export class SharePointClient {
     }
     return true;
   }
+
+  // ─── ドキュメントライブラリ ファイル操作 (ベクトルDB セグメント配布用) ───────
+
+  /** サイトの server-relative パス (例: /sites/n365)。 */
+  serverRelativeSite(): string {
+    try { return new URL(this.siteUrl).pathname.replace(/\/+$/, ''); } catch { return ''; }
+  }
+
+  /** フォルダが無ければ作成 (親も含めて段階的に)。serverRelativeUrl は site 込み。 */
+  async ensureFolder(serverRelativeUrl: string): Promise<void> {
+    const digest = await this.getFormDigest();
+    const res = await fetch(
+      `${this.siteUrl}/_api/web/folders/addUsingPath(decodedurl='${encodeURIComponent(serverRelativeUrl)}')`,
+      {
+        method: 'POST',
+        headers: await this.headers({ 'Content-Type': 'application/json;odata=nometadata', 'X-RequestDigest': digest }),
+        credentials: 'include',
+      },
+    );
+    // 既に存在 (409/500) は無視。それ以外の失敗のみ投げる。
+    if (!res.ok && res.status !== 409 && res.status !== 500) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`ensureFolder HTTP ${res.status} ${body.slice(0, 200)}`);
+    }
+  }
+
+  /** ファイル本文をテキストで取得。存在しなければ null。 */
+  async readFileText(serverRelativeUrl: string): Promise<string | null> {
+    const res = await fetch(
+      `${this.siteUrl}/_api/web/GetFileByServerRelativeUrl('${encodeURIComponent(serverRelativeUrl)}')/$value`,
+      { headers: { Accept: '*/*' }, credentials: 'include' },
+    );
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`readFile HTTP ${res.status} (${serverRelativeUrl})`);
+    return res.text();
+  }
+
+  /** テキストをファイルとしてアップロード (上書き)。folder は site 込み server-relative。 */
+  async uploadFileText(folderServerRelativeUrl: string, name: string, text: string): Promise<void> {
+    const digest = await this.getFormDigest();
+    const url = `${this.siteUrl}/_api/web/GetFolderByServerRelativeUrl('${encodeURIComponent(folderServerRelativeUrl)}')`
+      + `/Files/add(url='${encodeURIComponent(name)}',overwrite=true)`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: await this.headers({ 'Content-Type': 'text/plain;charset=utf-8', 'X-RequestDigest': digest }),
+      credentials: 'include',
+      body: text,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`uploadFile(${name}) HTTP ${res.status} ${body.slice(0, 200)}`);
+    }
+  }
+
+  /** フォルダ直下のファイル名一覧。フォルダが無ければ空配列。 */
+  async listFolderFileNames(folderServerRelativeUrl: string): Promise<string[]> {
+    const res = await fetch(
+      `${this.siteUrl}/_api/web/GetFolderByServerRelativeUrl('${encodeURIComponent(folderServerRelativeUrl)}')/Files?$select=Name&$top=5000`,
+      { headers: await this.headers(), credentials: 'include' },
+    );
+    if (!res.ok) return [];
+    const json = await res.json() as { value?: { Name?: string }[] };
+    return (json.value ?? []).map(f => f.Name ?? '').filter(Boolean);
+  }
 }
