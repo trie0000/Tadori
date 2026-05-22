@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.local
+.DS_Store
+
+# 秘密情報を含む relay 設定 (env.example のみコミット)
+scripts/*.env
+*.env
+!*.env.example
