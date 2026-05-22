@@ -206,7 +206,7 @@ export function loadSettings(): RuntimeSettings {
     relayBaseUrl: corpBaseUrl(),
     embeddingDeployment: deploymentIdFor(embeddingModel),
     apiVersion: lsGet(KEY.embeddingApiVersion) || DEFAULT_EMBEDDING_API_VERSION,
-    dimensions: Number(lsGet(KEY.dimensions) || '256') || 256,
+    dimensions: Number(lsGet(KEY.dimensions) || '1024') || 1024,
 
     claudeApiKey: lsGet(KEY.claudeKey),
     claudeModel: lsGetEff(KEY.claudeModel) || DEFAULT_CLAUDE_MODEL,
