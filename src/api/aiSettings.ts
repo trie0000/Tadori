@@ -56,7 +56,7 @@ const DEFAULT_PROVIDER: Provider = 'corp';
 export const DEFAULT_CORP_MODEL = 'gpt-4.1-mini';
 export const DEFAULT_CLAUDE_MODEL = 'claude-sonnet-4-5';
 export const DEFAULT_VOYAGE_MODEL = 'voyage-3.5-lite';
-export const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
+export const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-large';
 const DEFAULT_EMBEDDING_API_VERSION = '2024-02-01';
 
 const KEY = {

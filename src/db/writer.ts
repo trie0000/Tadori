@@ -6,6 +6,7 @@
 //   src/sync/lease.ts (別タスク) で gating する。
 
 import { getEngine } from './engine';
+import { getLease } from '../sync/lease';
 import { embedDocsFor } from '../embeddings/router';
 import { encodeEmbedding } from '../lib/float16';
 import { normalize } from '../search/cosine';
@@ -41,6 +42,11 @@ export async function ingestToSegments(
   siteUrl: string,
   onProgress?: (phase: WritePhase, done: number, total: number) => void,
 ): Promise<WriteResult> {
+  // 書き込み権 (リース) を取得。取れなければ他の人が取り込み中。
+  if (!await getLease(siteUrl).ensureWriter()) {
+    throw new Error('書き込み権限がありません (他のメンバーが取り込み中)。しばらく待って再実行してください。');
+  }
+
   const eng = await getEngine(siteUrl);
   onProgress?.('sync', 0, 0);
   await eng.sync.sync(); // 書き込み前に最新へ追いつく
@@ -99,6 +105,9 @@ export async function ingestToSegments(
 
 /** 指定メールを削除 (tombstone を 1 件のセグメントとして追記)。 */
 export async function deleteFromSegments(messageId: string, siteUrl: string): Promise<void> {
+  if (!await getLease(siteUrl).ensureWriter()) {
+    throw new Error('書き込み権限がありません (他のメンバーが取り込み中)。');
+  }
   const eng = await getEngine(siteUrl);
   await eng.sync.sync();
   const manifest = await eng.store.ensureManifest();
