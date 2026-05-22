@@ -139,7 +139,7 @@ function sseResponse(fullText) {
   });
   return new Response(stream, { status:200, headers:{ 'Content-Type':'text/event-stream' } });
 }
-const MOCK_ANSWER = '春の懇親会は 5 月 23 日(金) の 18:30 から、本社 10F ラウンジで開催されます [1]。会費は 3,000 円で当日受付にて集金されます [1]。出欠は 5 月 16 日までにメールで返信してください [1][2]。';
+const MOCK_ANSWER = '## 春の懇親会について\n\n- **日時**: 5 月 23 日(金) 18:30〜 [1]\n- **場所**: 本社 10F ラウンジ [1]\n- **会費**: 3,000 円 (当日受付) [1]\n\n出欠は **5 月 16 日まで** にメールで返信してください [1][2]。\n\n> 当日は軽食とドリンクを用意しています。';
 
 window.fetch = async (url, opts) => {
   const u = String(url);

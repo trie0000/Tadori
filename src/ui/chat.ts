@@ -7,6 +7,7 @@ import { toast } from './toast';
 import { searchVectors } from '../search/vectorSearch';
 import { generateAnswer, type RagSource } from '../rag/client';
 import { loadSettings } from '../api/aiSettings';
+import { renderMarkdown } from '../lib/markdown';
 
 export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement {
   const thread = el('div', { class: 'tdr-thread' });
@@ -68,13 +69,15 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
       answerText.textContent = '';
       const t0 = performance.now();
 
+      let full = '';
       await generateAnswer(q, sources, s, delta => {
-        answerText.textContent += delta;
+        full += delta;
+        answerText.textContent = full; // ストリーム中はプレーン (タイプ感)
         scrollBottom();
       }, abort.signal);
 
-      // [n] を引用チップに変換
-      answerText.innerHTML = (answerText.textContent ?? '').replace(
+      // 完了後に Markdown をリッチ表示 + [n] を引用チップに変換
+      answerText.innerHTML = renderMarkdown(full).replace(
         /\[(\d+)\]/g,
         (_, n) => `<span class="cite" data-n="${n}">[${n}]</span>`,
       );

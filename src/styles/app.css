@@ -47,6 +47,22 @@
   color:var(--accent-strong);font-family:var(--font-mono);font-size:var(--fs-base);display:flex;align-items:center;justify-content:center;}
 #tadori-root .tdr-a-body{flex:1;min-width:0;}
 #tadori-root .tdr-answer{font-size:var(--fs-base);color:var(--ink);line-height:1.85;}
+/* Markdown レンダリング (AI 回答) */
+#tadori-root .tdr-answer p{margin:0 0 var(--s-4);}
+#tadori-root .tdr-answer p:last-child{margin-bottom:0;}
+#tadori-root .tdr-answer h1,#tadori-root .tdr-answer h2,#tadori-root .tdr-answer h3,#tadori-root .tdr-answer h4{margin:var(--s-6) 0 var(--s-3);font-weight:600;line-height:1.4;}
+#tadori-root .tdr-answer h1{font-size:var(--fs-xl);}
+#tadori-root .tdr-answer h2{font-size:var(--fs-lg);}
+#tadori-root .tdr-answer h3,#tadori-root .tdr-answer h4{font-size:var(--fs-base);}
+#tadori-root .tdr-answer ul,#tadori-root .tdr-answer ol{margin:0 0 var(--s-4);padding-left:1.5em;}
+#tadori-root .tdr-answer li{margin:var(--s-1) 0;}
+#tadori-root .tdr-answer blockquote{margin:0 0 var(--s-4);padding:var(--s-2) var(--s-5);border-left:3px solid var(--line-strong);color:var(--ink-3);}
+#tadori-root .tdr-answer code{font-family:var(--font-mono);font-size:.9em;background:var(--paper-2);border:1px solid var(--line);border-radius:var(--r-1);padding:1px 5px;}
+#tadori-root .tdr-answer pre{margin:0 0 var(--s-4);padding:var(--s-4) var(--s-5);background:var(--paper-2);border:1px solid var(--line);border-radius:var(--r-3);overflow:auto;}
+#tadori-root .tdr-answer pre code{background:none;border:none;padding:0;font-size:var(--fs-sm);line-height:1.6;}
+#tadori-root .tdr-answer a{color:var(--accent-strong);text-decoration:underline;}
+#tadori-root .tdr-answer hr{border:none;border-top:1px solid var(--line);margin:var(--s-5) 0;}
+#tadori-root .tdr-answer strong{font-weight:600;}
 #tadori-root .tdr-answer .cite{font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--accent-strong);
   background:var(--accent-soft);border-radius:var(--r-1);padding:0 4px;margin:0 1px;cursor:pointer;vertical-align:1px;}
 #tadori-root .tdr-a-meta{display:flex;align-items:center;gap:var(--s-4);margin:var(--s-4) 0 var(--s-3);font-size:var(--fs-sm);color:var(--ink-3);}
