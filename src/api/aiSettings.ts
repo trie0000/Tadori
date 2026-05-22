@@ -78,6 +78,7 @@ const KEY = {
   listTitle:           'tadori:list-title',
   mlAddresses:         'tadori:ml-addresses',
   ingestIntervalSec:   'tadori:ingest-interval-sec',
+  embedConcurrency:    'tadori:embed-concurrency',
 } as const;
 
 const DEFAULT_SUFFIX = ':default';
@@ -176,6 +177,7 @@ export interface RuntimeSettings {
   listTitle: string;
   mlAddresses: string[];
   ingestIntervalSec: number;
+  embedConcurrency: number;
 }
 
 /** provider を解決。開発者モード OFF のときは 'claude' を 'corp' に丸める。 */
@@ -217,6 +219,7 @@ export function loadSettings(): RuntimeSettings {
     listTitle: lsGet(KEY.listTitle) || '受信メールリスト',
     mlAddresses: parseAddressList(lsGet(KEY.mlAddresses)),
     ingestIntervalSec: Number(lsGet(KEY.ingestIntervalSec) || '30') || 30,
+    embedConcurrency: Math.min(10, Math.max(1, Number(lsGet(KEY.embedConcurrency) || '3') || 3)),
   };
 }
 
@@ -238,6 +241,7 @@ export function saveSettings(s: Partial<RuntimeSettings>): void {
   if (s.listTitle !== undefined)        lsSet(KEY.listTitle, s.listTitle);
   if (s.mlAddresses !== undefined)      lsSet(KEY.mlAddresses, s.mlAddresses.join('\n'));
   if (s.ingestIntervalSec !== undefined) lsSet(KEY.ingestIntervalSec, String(s.ingestIntervalSec));
+  if (s.embedConcurrency !== undefined)  lsSet(KEY.embedConcurrency, String(Math.min(10, Math.max(1, s.embedConcurrency))));
 }
 
 export function parseAddressList(raw: string): string[] {

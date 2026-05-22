@@ -79,24 +79,41 @@ export async function ingestToSegments(
   let segments = 0;
   let cancelled = false;
 
-  // バッチ単位で「埋め込み → セグメント書込 → manifest 更新」を確定。
-  for (let off = 0; off < fresh.length; off += BATCH) {
-    if (signal?.aborted) { cancelled = true; break; }
-    const part = fresh.slice(off, off + BATCH);
+  // 取り込み対象をバッチに分割。
+  const batches: IngestMail[][] = [];
+  for (let off = 0; off < fresh.length; off += BATCH) batches.push(fresh.slice(off, off + BATCH));
+
+  // 埋め込みは API レイテンシ律速なので、最大 embedConcurrency 本を並列実行する。
+  // ただしセグメント書込/manifest 更新は順序依存 (seq 採番・版管理) なので直列のまま。
+  const concurrency = Math.min(10, Math.max(1, s.embedConcurrency || 3));
+  const embedOf = (b: IngestMail[]): Promise<Float32Array[]> => {
     // 埋め込みは本文のテキストで行う。HTML 本文はタグを除いてテキスト抽出。
     // 空 (引用/署名のみ等) は埋め込み API が空文字を拒否するため件名へフォールバック。
-    const bodies = part.map(m => {
+    const bodies = b.map(m => {
       const text = m.isHtml ? htmlToText(m.body) : cleanBody(m.body);
       return text || (m.subject || '').trim() || '(本文なし)';
     });
+    return embedDocsFor(bodies, s, signal);
+  };
+
+  // 先読みパイプライン: 先頭 concurrency 本を起動しておき、順番に await→書込→次を起動。
+  const inflight = new Map<number, Promise<Float32Array[]>>();
+  for (let i = 0; i < Math.min(concurrency, batches.length); i++) inflight.set(i, embedOf(batches[i]));
+
+  for (let bi = 0; bi < batches.length; bi++) {
+    if (signal?.aborted) { cancelled = true; break; }
+    const part = batches[bi];
 
     let vecs: Float32Array[];
     try {
-      vecs = await embedDocsFor(bodies, s, signal);
+      vecs = await inflight.get(bi)!;
     } catch (e) {
       if (signal?.aborted || (e instanceof Error && e.name === 'AbortError')) { cancelled = true; break; }
       throw e;
     }
+    inflight.delete(bi);
+    const next = bi + concurrency;
+    if (next < batches.length && !signal?.aborted) inflight.set(next, embedOf(batches[next]));
 
     const records: SegmentRecord[] = part.map((m, i) => ({
       seq: ++seq,
@@ -130,6 +147,10 @@ export async function ingestToSegments(
     segments++;
     onProgress?.('upload', added, fresh.length);
   }
+
+  // 早期終了 (停止/エラー) で未 await の先読み埋め込みが残ると unhandledrejection に
+  // なるため、ここで握りつぶしておく。
+  for (const p of inflight.values()) p.catch(() => {});
 
   return { added, skipped, segments, cancelled };
 }
