@@ -403,6 +403,17 @@ function Invoke-OutlookImport {
             return $false
         }
 
+        # 除外フォルダ (送信済み=5 / 削除済み=3 / 迷惑メール=23) を全ストアぶん収集。
+        # EntryID で一致判定し、そのフォルダ自身とサブフォルダを走査対象から外す。
+        $skipIds = @{}
+        try {
+            foreach ($store in $ns.Stores) {
+                foreach ($ft in @(3, 5, 23)) {
+                    try { $f = $store.GetDefaultFolder($ft); if ($f) { $skipIds[$f.EntryID] = $true } } catch { }
+                }
+            }
+        } catch { }
+
         $results = New-Object System.Collections.ArrayList
         # 全ストア (メインメールボックス / アーカイブ / オンラインアーカイブ / PST) の
         # ルートから全フォルダを幅優先で走査する。ローカルの「アーカイブ」は受信トレイの
@@ -412,6 +423,7 @@ function Invoke-OutlookImport {
         $folders = 0
         while ($queue.Count -gt 0 -and $results.Count -lt $max -and $folders -lt 5000) {
             $folder = $queue.Dequeue(); $folders++
+            try { if ($skipIds.ContainsKey($folder.EntryID)) { continue } } catch { }  # 送信済/削除済/迷惑メールは除外 (配下も辿らない)
             try { foreach ($sf in $folder.Folders) { $queue.Enqueue($sf) } } catch { }
             $items = $null
             try { $items = $folder.Items.Restrict($filter) } catch { continue }  # メール以外のフォルダは除外
