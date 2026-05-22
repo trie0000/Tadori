@@ -45,6 +45,7 @@ export async function seedTestData(
   const base = new Date('2026-04-01T00:00:00Z').getTime();
   const mails: IngestMail[] = SAMPLE_MAILS.map((m, i) => ({
     messageId: `<seed-${i}@tadori.local>`,
+    internetMessageId: `<seed-${i}@tadori.local>`,
     subject: m.subject,
     from: m.from,
     to: ['ml@example.co.jp'],

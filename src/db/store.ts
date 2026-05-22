@@ -13,6 +13,7 @@ import type { Segment, SegmentRecord } from '../sync/segments';
 
 export interface MailRecord {
   messageId: string;
+  internetMessageId: string;
   subject: string;
   from: string;
   to: string[];
@@ -53,6 +54,7 @@ export class VectorDb {
       if (!r.emb) return; // upsert は埋め込み必須
       this.records.set(r.messageId, {
         messageId: r.messageId,
+        internetMessageId: r.internetMessageId ?? '',
         subject: r.subject ?? '(件名なし)',
         from: r.from ?? '',
         to: r.to ?? [],

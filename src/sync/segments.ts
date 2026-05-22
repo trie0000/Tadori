@@ -15,6 +15,8 @@ export interface SegmentRecord {
   op: SegmentOp;
   messageId: string;
   // op='upsert' のときのみ以下を持つ (delete は messageId だけの tombstone)。
+  /** RFC2822 Internet-Message-Id (Outlook での再検索キー)。無い場合あり。 */
+  internetMessageId?: string;
   subject?: string;
   from?: string;
   to?: string[];

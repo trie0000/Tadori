@@ -20,6 +20,8 @@ import type { RuntimeSettings } from '../api/aiSettings';
 
 export interface IngestMail {
   messageId: string;
+  /** RFC2822 Internet-Message-Id (Outlook での再検索キー)。 */
+  internetMessageId?: string;
   subject: string;
   from: string;
   to: string[];
@@ -119,6 +121,7 @@ export async function ingestToSegments(
       seq: ++seq,
       op: 'upsert',
       messageId: m.messageId,
+      internetMessageId: m.internetMessageId,
       subject: m.subject,
       from: m.from,
       to: m.to,

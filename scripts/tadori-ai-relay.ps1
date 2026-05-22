@@ -192,6 +192,7 @@ Write-Host ('-' * 72)
 Write-Host 'エンドポイント:'
 Write-Host "  GET  $baseUrlShort/tadori/health           (死活確認)"
 Write-Host "  GET  $baseUrlShort/tadori/outlook/import   (Outlook からメール読込: ?to=&cc=&since=&until=&max=)"
+Write-Host "  GET  $baseUrlShort/tadori/outlook/open     (Internet-Message-Id でメール表示: ?id=)"
 Write-Host "  GET  $baseUrlShort/tadori/tadori.bundle.js (開発: ローカル dist のバンドル配信)"
 Write-Host "  GET  $baseUrlShort/tadori/version.txt      (開発: ローカル dist のバージョン配信)"
 Write-Host "  $baseUrlShort/tadori/bundle-dir            (開発: 配信フォルダの確認 GET / 変更 POST)"
@@ -346,7 +347,8 @@ function Read-MailItem {
         }
     } catch { try { $body = [string]$Item.Body } catch { } }
     return @{
-        messageId = [string]$mid
+        messageId         = [string]$mid
+        internetMessageId = [string]$mid
         subject   = [string]$Item.Subject
         from      = [string]$from
         to        = @($toList)
@@ -425,6 +427,60 @@ function Invoke-OutlookImport {
     }
 }
 
+# Internet-Message-Id で Outlook 内のメールを探し、見つかればクライアント上に
+# 表示 (インスペクタを開く)。受信トレイ等の全ストア・全サブフォルダを走査。
+function Invoke-OutlookOpen {
+    param([System.Net.HttpListenerContext]$Context)
+    $response = $Context.Response
+    $id = $Context.Request.QueryString['id']
+    if (-not $id) {
+        Send-Error -Response $response -Status 400 -Code 'bad_request' -Detail 'クエリ id (Internet-Message-Id) が必要です'
+        return
+    }
+
+    $ol = Get-OutlookOrNull
+    if (-not $ol) {
+        Send-Error -Response $response -Status 503 -Code 'no_outlook' -Detail 'Outlook を起動/接続できませんでした (Windows + Outlook が必要)'
+        return
+    }
+
+    try {
+        $ns = $ol.GetNamespace('MAPI')
+        # PR_INTERNET_MESSAGE_ID (0x1035001F) を DASL で等値フィルタ。値内の ' は '' へ。
+        $idEsc = $id -replace "'", "''"
+        $dasl  = '@SQL="http://schemas.microsoft.com/mapi/proptag/0x1035001F" = ''' + $idEsc + ''''
+
+        $queue = New-Object System.Collections.Queue
+        foreach ($store in $ns.Folders) { $queue.Enqueue($store) }
+
+        $found = $null
+        $folders = 0
+        while ($queue.Count -gt 0 -and -not $found -and $folders -lt 2000) {
+            $folder = $queue.Dequeue(); $folders++
+            try { foreach ($sf in $folder.Folders) { $queue.Enqueue($sf) } } catch { }
+            try {
+                $items = $folder.Items.Restrict($dasl)
+                foreach ($it in $items) {
+                    try { if ($it.Class -eq 43) { $found = $it; break } } catch { }  # olMail
+                }
+            } catch { continue }
+        }
+
+        if ($found) {
+            try { $found.Display() } catch { }       # インスペクタを開く
+            try { $ol.ActiveExplorer().Activate() } catch { }
+            Write-Host ("[open] displayed mail id={0}" -f $id)
+            Send-Json -Response $response -Status 200 -Body @{ ok = $true; found = $true }
+        } else {
+            Write-Host ("[open] not found id={0} (scanned {1} folders)" -f $id, $folders)
+            Send-Json -Response $response -Status 200 -Body @{ ok = $true; found = $false }
+        }
+    }
+    catch {
+        Send-Error -Response $response -Status 500 -Code 'outlook_error' -Detail $_.Exception.Message
+    }
+}
+
 # ─── Request handler ────────────────────────────────────────────────────────
 
 function Invoke-RelayRequest {
@@ -454,6 +510,12 @@ function Invoke-RelayRequest {
     # ── ローカル機能: Outlook からのメールインポート (読み取り専用) ──
     if ($path -eq '/tadori/outlook/import') {
         Invoke-OutlookImport -Context $Context
+        return
+    }
+
+    # ── ローカル機能: Internet-Message-Id でメールを Outlook 上に表示 ──
+    if ($path -eq '/tadori/outlook/open') {
+        Invoke-OutlookOpen -Context $Context
         return
     }
 

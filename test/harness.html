@@ -155,13 +155,20 @@ window.fetch = async (url, opts) => {
   if (u.includes('/tadori/outlook/import')) {
     await new Promise(r => setTimeout(r, 150));
     const mails = MAILS.slice(0, 4).map(m => ({
-      messageId: '<' + m.Id + '@example>', subject: m.Title, from: m.From,
+      messageId: '<' + m.Id + '@example>', internetMessageId: '<' + m.Id + '@example>',
+      subject: m.Title, from: m.From,
       to: ['ml@example.co.jp'], cc: [], date: m.Created, body: m.Body,
     }));
     // 1件を HTML メールにして HTML レンダリング検証
     mails[0] = { ...mails[0], isHtml: true,
       body: '<p>お疲れさまです、<strong>総務部</strong>です。</p><p>春の懇親会を <b>5 月 23 日(金) 18:30</b> より本社 10F ラウンジにて開催します。</p><ul><li>会費: 3,000 円</li><li>出欠: 5 月 16 日まで</li></ul>' };
     return jsonResponse({ ok: true, count: mails.length, mails });
+  }
+  // Outlook 表示 (relay) をモック: id を受けて found:true を返す
+  if (u.includes('/tadori/outlook/open')) {
+    const id = new URL(u, location.origin).searchParams.get('id');
+    console.log('[harness] outlook/open id=', id);
+    return jsonResponse({ ok: true, found: true });
   }
 
   // ベクトルDB セグメント (新方式) — ステートフルな疑似ファイルストア

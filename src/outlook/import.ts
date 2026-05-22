@@ -7,6 +7,8 @@ import type { IngestMail } from '../db/writer';
 
 export interface OutlookMail {
   messageId: string;
+  /** RFC2822 Internet-Message-Id。Outlook クライアントでの再検索に使う。 */
+  internetMessageId?: string;
   subject: string;
   from: string;
   to: string[];
@@ -44,10 +46,26 @@ export async function fetchOutlookMails(relayBaseUrl: string, f: ImportFilter, s
   return json.mails ?? [];
 }
 
+/** relay 経由で Outlook クライアント上に該当メールを表示する。
+ *  internetMessageId で受信トレイ配下を検索し、見つかればインスペクタを開く。 */
+export async function openMailInOutlook(relayBaseUrl: string, internetMessageId: string, signal?: AbortSignal): Promise<void> {
+  if (!relayBaseUrl) throw new Error('中継サーバ URL が未設定です (AI 接続で設定)');
+  if (!internetMessageId) throw new Error('このメールには Internet-Message-Id がありません');
+  const url = `${relayBaseUrl.replace(/\/+$/, '')}/tadori/outlook/open?id=${encodeURIComponent(internetMessageId)}`;
+  const res = await fetch(url, { method: 'GET', signal });
+  if (!res.ok) {
+    const b = await res.text().catch(() => '');
+    throw new Error(`Outlook 表示失敗: HTTP ${res.status} ${b.slice(0, 300)}`);
+  }
+  const json = await res.json() as { ok?: boolean; found?: boolean };
+  if (!json.found) throw new Error('Outlook 内に該当メールが見つかりませんでした');
+}
+
 /** OutlookMail → ベクトルDB 書き込み用の IngestMail に変換。 */
 export function toIngestMails(mails: OutlookMail[]): IngestMail[] {
   return mails.map(m => ({
     messageId: m.messageId || `<${m.date}|${m.from}>`,
+    internetMessageId: m.internetMessageId || m.messageId || '',
     subject: m.subject || '(件名なし)',
     from: m.from,
     to: m.to ?? [],

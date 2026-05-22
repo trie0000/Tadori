@@ -6,6 +6,7 @@ import { icons } from './icons';
 import { toast } from './toast';
 import { searchVectors, type MailHit } from '../search/vectorSearch';
 import { htmlToText, renderMailBody } from '../lib/mailhtml';
+import { openMailInOutlook } from '../outlook/import';
 import { generateAnswer, type RagSource } from '../rag/client';
 import { loadSettings } from '../api/aiSettings';
 import { renderMarkdown } from '../lib/markdown';
@@ -91,7 +92,7 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
         el('span', { class: 'mono' }, [`${ms} ms`]),
       );
 
-      appendSources(aBody, hits);
+      appendSources(aBody, hits, s.relayBaseUrl);
 
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') return;
@@ -103,7 +104,7 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     }
   }
 
-  function appendSources(container: HTMLElement, hits: MailHit[]): void {
+  function appendSources(container: HTMLElement, hits: MailHit[], relayBaseUrl: string): void {
     const hdrEl  = el('div', { class: 'tdr-sources-h' }, [
       el('span', { html: icons.chevron(14) }),
       el('span', {}, [`参照メール (${hits.length})`]),
@@ -118,11 +119,30 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     hits.forEach((h, i) => {
       const plain = h.isHtml ? htmlToText(h.body) : h.body;
       const hitEl = el('div', { class: 'tdr-hit' });
-      hitEl.appendChild(el('div', { class: 'tdr-hit-head' }, [
+      const head = el('div', { class: 'tdr-hit-head' }, [
         el('span', { class: 'tdr-hit-num' }, [String(i + 1)]),
         el('span', { class: 'tdr-hit-subject' }, [h.subject]),
         el('span', { class: 'tdr-hit-score' }, [h.score.toFixed(3)]),
-      ]));
+      ]);
+      if (h.internetMessageId) {
+        const openBtn = el('button', {
+          class: 'tdr-hit-open', 'aria-label': 'Outlook で開く', title: 'Outlook で開く',
+          html: icons.external(14),
+        });
+        openBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          openBtn.disabled = true;
+          try {
+            await openMailInOutlook(relayBaseUrl, h.internetMessageId);
+          } catch (err: unknown) {
+            toast(root, `Outlook 表示に失敗: ${err instanceof Error ? err.message : String(err)}`, 'error');
+          } finally {
+            openBtn.disabled = false;
+          }
+        });
+        head.appendChild(openBtn);
+      }
+      hitEl.appendChild(head);
       hitEl.appendChild(el('div', { class: 'tdr-hit-from' }, [
         `${h.from}  ${h.date.slice(0, 10)}`,
       ]));

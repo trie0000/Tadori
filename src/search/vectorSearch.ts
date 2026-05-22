@@ -7,6 +7,7 @@ import type { RuntimeSettings } from '../api/aiSettings';
 
 export interface MailHit {
   messageId: string;
+  internetMessageId: string;
   subject: string;
   from: string;
   date: string;
@@ -32,6 +33,7 @@ export async function searchVectors(
   const qvec = await embedQueryFor(question, s);
   return eng.db.search(qvec, topK).map(({ record, score }) => ({
     messageId: record.messageId,
+    internetMessageId: record.internetMessageId,
     subject: record.subject,
     from: record.from,
     date: record.date,
