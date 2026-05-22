@@ -8,9 +8,11 @@ import { toast } from './toast';
 import { searchVectors } from '../search/vectorSearch';
 import { htmlToText, renderMailBody } from '../lib/mailhtml';
 import { generateAnswer, type RagSource } from '../rag/client';
-import { loadSettings } from '../api/aiSettings';
+import { loadSettings, saveSettings, CORP_AI_MODELS, CLAUDE_MODELS } from '../api/aiSettings';
+import { isDeveloperMode } from '../utils/devMode';
 import { renderMarkdown } from '../lib/markdown';
 import { openMailInOutlook } from '../outlook/import';
+import { confirmModal } from './modal';
 import {
   listSessions, getSession, appendTurn, setTitle, deleteSession, newSessionId,
   type ChatSession, type SavedHit,
@@ -78,10 +80,18 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
       const del = el('button', { class: 'tdr-session-del', 'aria-label': '削除', title: '削除', html: icons.trash(13) });
       del.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (!confirm(`このセッションを削除しますか?\n「${s.title}」`)) return;
-        deleteSession(s.id);
-        if (s.id === currentId) startNewSession();
-        else refreshList();
+        confirmModal({
+          root,
+          title: 'セッションを削除',
+          message: `このチャット履歴を削除しますか?\n「${s.title}」`,
+          primaryLabel: '削除',
+          primaryVariant: 'danger',
+          onConfirm: () => {
+            deleteSession(s.id);
+            if (s.id === currentId) startNewSession();
+            else refreshList();
+          },
+        });
       });
       item.appendChild(del);
       sessionList.appendChild(item);
@@ -130,7 +140,26 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
       el('span', {}, [`${hits.length} 件参照`]),
       el('span', { class: 'mono' }, [`${ms} ms`]),
     );
+    refs.aBody.appendChild(makeCopyBtn(fullMarkdown));
     if (hits.length) appendSources(refs.aBody, hits, relayBaseUrl);
+  }
+
+  function makeCopyBtn(text: string): HTMLElement {
+    const btn = el('button', { class: 'tdr-copy', 'aria-label': '回答をコピー', title: '回答をコピー' }, [
+      el('span', { class: 'ic', html: icons.copy(14) }),
+      el('span', { class: 'lbl' }, ['コピー']),
+    ]);
+    btn.addEventListener('click', () => {
+      void navigator.clipboard?.writeText(text).then(() => {
+        btn.classList.add('is-done');
+        btn.replaceChildren(el('span', { class: 'ic', html: icons.check(14) }), el('span', { class: 'lbl' }, ['コピーしました']));
+        setTimeout(() => {
+          btn.classList.remove('is-done');
+          btn.replaceChildren(el('span', { class: 'ic', html: icons.copy(14) }), el('span', { class: 'lbl' }, ['コピー']));
+        }, 1500);
+      }).catch(() => toast(root, 'コピーに失敗しました', 'error'));
+    });
+    return btn;
   }
 
   function renderSession(s: ChatSession): void {
@@ -301,12 +330,48 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
   const chatCol = el('div', { class: 'tdr-chat' }, [
     thread,
     el('div', { class: 'tdr-composer' }, [
-      el('div', { class: 'tdr-note-form' }, [input, sendBtn]),
-      el('div', { class: 'tdr-note-hint' }, ['⌘+Enter または Ctrl+Enter で送信']),
+      el('div', { class: 'tdr-composer-inner' }, [
+        buildModelPicker(),
+        el('div', { class: 'tdr-note-form' }, [input, sendBtn]),
+        el('div', { class: 'tdr-note-hint' }, ['⌘+Enter または Ctrl+Enter で送信']),
+      ]),
     ]),
   ]);
 
   return el('div', { class: 'tdr-main' }, [sidebar, divider, chatCol]);
+}
+
+/** 入力ボックス上のモデル切替 (Spira と同じ作法)。社内AI + (開発者モード時) Claude。 */
+function buildModelPicker(): HTMLSelectElement {
+  const sel = el('select', { class: 'tdr-model-pick', title: 'プロバイダ / モデル' }) as HTMLSelectElement;
+
+  function sync(): void {
+    const s = loadSettings();
+    const cur = `${s.provider}:${s.provider === 'claude' ? s.claudeModel : s.chatModel}`;
+    sel.replaceChildren();
+    const corp = el('optgroup', { label: '社内 AI' },
+      CORP_AI_MODELS.map(m => el('option', { value: `corp:${m.id}` }, [m.id])));
+    sel.appendChild(corp);
+    if (isDeveloperMode()) {
+      const claude = el('optgroup', { label: 'Claude' },
+        CLAUDE_MODELS.map(m => el('option', { value: `claude:${m.id}` }, [m.label])));
+      sel.appendChild(claude);
+    }
+    sel.value = cur;
+  }
+
+  sel.addEventListener('change', () => {
+    const i = sel.value.indexOf(':');
+    if (i < 0) return;
+    const provider = sel.value.slice(0, i);
+    const modelId = sel.value.slice(i + 1);
+    if (provider === 'claude') saveSettings({ provider: 'claude', claudeModel: modelId });
+    else saveSettings({ provider: 'corp', chatModel: modelId });
+    sync();
+  });
+
+  sync();
+  return sel;
 }
 
 function clampW(w: number): number {
