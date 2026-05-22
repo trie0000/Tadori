@@ -58,12 +58,13 @@ export async function generateAnswer(
     headers,
     credentials: 'omit',
     signal,
+    // temperature は送らない: モデルによっては既定(1)以外を拒否する
+    // ("Unsupported value: 'temperature' ... Only the default value is supported")。
     body: JSON.stringify({
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: buildUserPrompt(question, sources) },
       ],
-      temperature: 0.2,
       stream: true,
     }),
   });
