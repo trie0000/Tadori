@@ -8,12 +8,29 @@
 // 検索を ANN(voy 等) に差し替えたくなったら search() だけ置換すればよい。
 
 import { decodeEmbedding } from '../lib/float16';
-import { normalize, search as cosineSearch } from '../search/cosine';
+import { normalize } from '../search/cosine';
 import type { Segment, SegmentRecord } from '../sync/segments';
+
+/** 文字 2-gram の集合 (日本語は空白区切りが無いので char bigram で一致を取る)。 */
+function bigrams(text: string): Set<string> {
+  const t = (text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const out = new Set<string>();
+  for (let i = 0; i < t.length - 1; i++) out.add(t.slice(i, i + 2));
+  return out;
+}
+
+/** クエリ bigram のうちドキュメントに含まれる割合 (0..1)。 */
+function keywordCoverage(query: Set<string>, doc: Set<string>): number {
+  if (query.size === 0) return 0;
+  let hit = 0;
+  for (const g of query) if (doc.has(g)) hit++;
+  return hit / query.size;
+}
 
 export interface MailRecord {
   messageId: string;
   internetMessageId: string;
+  conversationId: string;
   subject: string;
   from: string;
   to: string[];
@@ -48,6 +65,7 @@ export class VectorDb {
   applyRecord(r: SegmentRecord): void {
     const prev = this.appliedSeq.get(r.messageId) ?? 0;
     if (r.seq <= prev) return; // 古い → last-writer-wins で無視 (冪等)
+    this.kwCache.delete(r.messageId); // 内容が変わる → キーワード索引を無効化
     if (r.op === 'delete') {
       this.records.delete(r.messageId);
     } else {
@@ -55,6 +73,7 @@ export class VectorDb {
       this.records.set(r.messageId, {
         messageId: r.messageId,
         internetMessageId: r.internetMessageId ?? '',
+        conversationId: r.conversationId ?? '',
         subject: r.subject ?? '(件名なし)',
         from: r.from ?? '',
         to: r.to ?? [],
@@ -69,22 +88,49 @@ export class VectorDb {
     if (r.seq > this.maxSeq) this.maxSeq = r.seq;
   }
 
-  /** 正規化済みクエリベクトルで Top-K (総当たり cosine)。 */
-  search(qvec: Float32Array, topK: number): DbHit[] {
+  /** Top-K 検索。keywordWeight>0 ならハイブリッド (ベクトル + 文字bigramキーワード) の
+   *  加重和でスコアリング (両方 0..1 に正規化)。score は 0..1 で閾値判定にそのまま使える。 */
+  search(qvec: Float32Array, topK: number, queryText = '', keywordWeight = 0): DbHit[] {
     const q = normalize(qvec);
-    const index = Array.from(this.records.values(), r => ({ messageId: r.messageId, vec: r.vec }));
-    const hits = cosineSearch(q, index, topK);
-    const out: DbHit[] = [];
-    for (const h of hits) {
-      const rec = this.records.get(h.messageId);
-      if (rec) out.push({ record: rec, score: h.score });
-    }
+    const dim = q.length;
+    const recs = [...this.records.values()];
+    const useKw = keywordWeight > 0 && queryText.trim().length > 0;
+    const qbi = useKw ? bigrams(queryText) : null;
+    const w = Math.min(1, Math.max(0, keywordWeight));
+
+    const scored = recs.map(r => {
+      let dot = 0;
+      if (r.vec.length === dim) for (let i = 0; i < dim; i++) dot += q[i] * r.vec[i];
+      const vcos = Math.max(0, dot); // cosine を 0..1 に
+      if (!qbi) return { record: r, score: vcos };
+      const kcov = keywordCoverage(qbi, this.kwIndex(r));
+      return { record: r, score: (1 - w) * vcos + w * kcov };
+    });
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, topK);
+  }
+
+  // ── キーワード索引 (文字bigram)。レコード単位でキャッシュ ──
+  private kwCache = new Map<string, Set<string>>();
+  private kwIndex(r: MailRecord): Set<string> {
+    let s = this.kwCache.get(r.messageId);
+    if (!s) { s = bigrams(`${r.subject} ${r.body}`); this.kwCache.set(r.messageId, s); }
+    return s;
+  }
+
+  /** 同一スレッド (conversationId) のレコードを受信日時の昇順で返す。 */
+  byConversation(conversationId: string): MailRecord[] {
+    if (!conversationId) return [];
+    const out: MailRecord[] = [];
+    for (const r of this.records.values()) if (r.conversationId === conversationId) out.push(r);
+    out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
     return out;
   }
 
   clear(): void {
     this.records.clear();
     this.appliedSeq.clear();
+    this.kwCache.clear();
     this.maxSeq = 0;
   }
 }

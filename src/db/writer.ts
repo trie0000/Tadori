@@ -22,6 +22,8 @@ export interface IngestMail {
   messageId: string;
   /** RFC2822 Internet-Message-Id (Outlook での再検索キー)。 */
   internetMessageId?: string;
+  /** スレッド識別子 (Outlook ConversationID)。 */
+  conversationId?: string;
   subject: string;
   from: string;
   to: string[];
@@ -127,6 +129,7 @@ export async function ingestToSegments(
       op: 'upsert',
       messageId: m.messageId,
       internetMessageId: m.internetMessageId,
+      conversationId: m.conversationId,
       subject: m.subject,
       from: m.from,
       to: m.to,

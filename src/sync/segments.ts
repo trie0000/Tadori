@@ -17,6 +17,8 @@ export interface SegmentRecord {
   // op='upsert' のときのみ以下を持つ (delete は messageId だけの tombstone)。
   /** RFC2822 Internet-Message-Id (Outlook での再検索キー)。無い場合あり。 */
   internetMessageId?: string;
+  /** スレッド識別子 (Outlook ConversationID)。経緯要約のグルーピングに使う。 */
+  conversationId?: string;
   subject?: string;
   from?: string;
   to?: string[];

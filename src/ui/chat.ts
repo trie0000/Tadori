@@ -5,9 +5,9 @@
 import { el } from '../lib/dom';
 import { icons } from './icons';
 import { toast } from './toast';
-import { searchVectors } from '../search/vectorSearch';
+import { searchVectors, getThread } from '../search/vectorSearch';
 import { htmlToText, renderMailBody } from '../lib/mailhtml';
-import { generateAnswer, type RagSource } from '../rag/client';
+import { generateAnswer, type RagSource, type ChatHistoryMsg } from '../rag/client';
 import { loadSettings, saveSettings, CORP_AI_MODELS, CLAUDE_MODELS } from '../api/aiSettings';
 import { isDeveloperMode } from '../utils/devMode';
 import { renderMarkdown } from '../lib/markdown';
@@ -17,6 +17,39 @@ import {
   listSessions, getSession, appendTurn, setTitle, deleteSession, newSessionId,
   type ChatSession, type SavedHit,
 } from './sessions';
+
+/** クエリに含まれる 2 文字以上の連続部分をスニペット内で <mark> 強調 (DOM 構築で安全)。
+ *  日本語は形態素を持たないので、クエリの部分文字列一致で貪欲にハイライトする。 */
+function highlightInto(host: HTMLElement, text: string, query: string): void {
+  const q = (query || '').toLowerCase().replace(/\s+/g, '');
+  if (!q || q.length < 2) { host.textContent = text; return; }
+  const lower = text.toLowerCase();
+  let i = 0;
+  while (i < text.length) {
+    // text[i..] から始まる最長の、query の部分文字列になっている連続を探す
+    let len = 0;
+    for (let l = Math.min(text.length - i, 12); l >= 2; l--) {
+      if (q.includes(lower.slice(i, i + l))) { len = l; break; }
+    }
+    if (len >= 2) {
+      host.appendChild(el('mark', {}, [text.slice(i, i + len)]));
+      i += len;
+    } else {
+      // 連続する非ヒット文字をまとめてテキストノードに
+      let j = i + 1;
+      while (j < text.length) {
+        let hit = false;
+        for (let l = Math.min(text.length - j, 12); l >= 2; l--) {
+          if (q.includes(lower.slice(j, j + l))) { hit = true; break; }
+        }
+        if (hit) break;
+        j++;
+      }
+      host.appendChild(document.createTextNode(text.slice(i, j)));
+      i = j;
+    }
+  }
+}
 
 /** 「処理中」を示すアニメーション付きインジケータ。 */
 function thinkingEl(text: string): HTMLElement {
@@ -53,8 +86,17 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
   ]);
 
   let abort: AbortController | null = null;
+  let generating = false;
   let currentId = newSessionId();   // 現在のセッション (最初の送信まで未保存)
   let hasTurns = false;
+
+  // 生成中は送信ボタンを停止ボタンに切り替える。
+  function setGenerating(on: boolean): void {
+    generating = on;
+    sendBtn.classList.toggle('is-stop', on);
+    sendBtn.innerHTML = on ? icons.stop(16) : icons.send(16);
+    sendBtn.setAttribute('aria-label', on ? '停止' : '送信');
+  }
 
   // ── 左ペイン (セッション一覧) ──
   const sessionList = el('div', { class: 'tdr-session-list' });
@@ -131,7 +173,7 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     return { turnEl, answerText, metaEl, aBody };
   }
 
-  function finalizeTurn(refs: TurnRefs, fullMarkdown: string, hits: SavedHit[], ms: number, relayBaseUrl: string): void {
+  function finalizeTurn(refs: TurnRefs, fullMarkdown: string, hits: SavedHit[], ms: number, relayBaseUrl: string, query = ''): void {
     refs.answerText.innerHTML = renderMarkdown(fullMarkdown).replace(
       /\[(\d+)\]/g,
       (_, n) => `<span class="cite" data-n="${n}">[${n}]</span>`,
@@ -141,7 +183,42 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
       el('span', { class: 'mono' }, [`${ms} ms`]),
     );
     refs.aBody.appendChild(makeCopyBtn(fullMarkdown));
-    if (hits.length) appendSources(refs.aBody, hits, relayBaseUrl);
+    if (hits.length) appendSources(refs.aBody, hits, relayBaseUrl, query);
+    wireCiteJump(refs.aBody);
+  }
+
+  // 回答中の [n] 引用クリックで該当の出典カードへスクロール + 展開 + ハイライト。
+  function wireCiteJump(aBody: HTMLElement): void {
+    const cites = aBody.querySelectorAll<HTMLElement>('.cite');
+    const hitCards = aBody.querySelectorAll<HTMLElement>('.tdr-hit');
+    if (!cites.length || !hitCards.length) return;
+    const hdr = aBody.querySelector('.tdr-sources-h');
+    const list = aBody.querySelector('.tdr-sources');
+    cites.forEach(c => {
+      c.addEventListener('click', () => {
+        const n = Number(c.dataset.n);
+        const card = hitCards[n - 1];
+        if (!card) return;
+        hdr?.classList.remove('collapsed');
+        list?.classList.remove('collapsed');
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        card.classList.add('is-flash');
+        setTimeout(() => card.classList.remove('is-flash'), 1200);
+      });
+    });
+  }
+
+  function renderSuggest(aBody: HTMLElement, qs: string[]): void {
+    if (!qs.length) return;
+    const row = el('div', { class: 'tdr-suggest' }, [
+      el('span', { class: 'tdr-suggest-h' }, ['関連する質問']),
+      ...qs.map(q => {
+        const chip = el('button', { class: 'tdr-suggest-chip' }, [q]);
+        chip.addEventListener('click', () => { input.value = q; autosize(); input.focus(); });
+        return chip;
+      }),
+    ]);
+    aBody.appendChild(row);
   }
 
   function makeCopyBtn(text: string): HTMLElement {
@@ -169,33 +246,62 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     const relayBaseUrl = loadSettings().relayBaseUrl;
     for (const t of s.turns) {
       const refs = buildTurn(t.q);
-      finalizeTurn(refs, t.answer, t.hits, t.ms, relayBaseUrl);
+      finalizeTurn(refs, t.answer, t.hits, t.ms, relayBaseUrl, t.q);
     }
     scrollBottom();
   }
 
-  async function submit(): Promise<void> {
-    const q = input.value.trim();
-    if (!q || sendBtn.disabled) return;
-    input.value = '';
-    autosize();
-    sendBtn.disabled = true;
+  /** 直近 3 ターンを履歴として渡す (フォローアップ質問の文脈用)。回答はトリム。 */
+  function buildHistory(): ChatHistoryMsg[] {
+    const sess = getSession(currentId);
+    if (!sess) return [];
+    const out: ChatHistoryMsg[] = [];
+    for (const t of sess.turns.slice(-3)) {
+      out.push({ role: 'user', content: t.q });
+      out.push({ role: 'assistant', content: t.answer.slice(0, 600) });
+    }
+    return out;
+  }
 
+  /** 1 ターンの共通処理: ヒット取得 → 生成 → 整形 → 保存。停止/エラー対応込み。 */
+  async function converse(opts: {
+    displayQ: string;
+    llmQuestion: string;
+    loadingLabel: string;
+    getHits: (signal: AbortSignal) => Promise<SavedHit[]>;
+  }): Promise<void> {
+    if (generating) return;
     if (!hasTurns) { emptyState.remove(); hasTurns = true; }
 
-    const refs = buildTurn(q);
+    const refs = buildTurn(opts.displayQ);
     scrollBottom();
-    refs.answerText.replaceChildren(thinkingEl('メールを検索中'));
+    refs.answerText.replaceChildren(thinkingEl(opts.loadingLabel));
 
     abort?.abort();
     abort = new AbortController();
+    const signal = abort.signal;
     const s = loadSettings();
+    const history = buildHistory();
+    setGenerating(true);
+
+    let full = '';
+    let aiTitle = '';
+    let suggestions: string[] = [];
+    let hits: SavedHit[] = [];
+    let t0 = performance.now();
+
+    const save = (): void => {
+      if (!full.trim()) return;
+      const ms = Math.round(performance.now() - t0);
+      finalizeTurn(refs, full, hits, ms, s.relayBaseUrl, opts.displayQ);
+      if (suggestions.length) renderSuggest(refs.aBody, suggestions);
+      const saved = appendTurn(currentId, { q: opts.displayQ, answer: full, hits, ms });
+      if (saved.turns.length === 1 && aiTitle) setTitle(currentId, aiTitle);
+      refreshList();
+    };
 
     try {
-      const raw = await searchVectors(q, s, siteUrl, s.ragTopK);
-      // スコアしきい値で足切り。全部下回ったら最良 1 件だけ残す (取りこぼし防止)。
-      let hits = raw.filter(h => h.score >= s.ragMinScore);
-      if (hits.length === 0 && raw.length > 0) hits = [raw[0]];
+      hits = await opts.getHits(signal);
       if (hits.length === 0) {
         refs.answerText.textContent = '該当するメールが見つかりませんでした。';
         return;
@@ -208,38 +314,63 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
         body: h.isHtml ? htmlToText(h.body) : h.body,
       }));
 
-      const t0 = performance.now();
-
-      let full = '';
+      t0 = performance.now();
       let firstDelta = true;
-      let aiTitle = '';
-      await generateAnswer(q, sources, s, delta => {
+      await generateAnswer(opts.llmQuestion, sources, s, delta => {
         full += delta;
         if (firstDelta) { refs.answerText.textContent = ''; firstDelta = false; } // 「生成中」を消す
         refs.answerText.textContent = full; // ストリーム中はプレーン (タイプ感)
         scrollBottom();
-      }, abort.signal, title => { aiTitle = title; });
+      }, signal, title => { aiTitle = title; }, history, qs => { suggestions = qs; });
 
-      const ms = Math.round(performance.now() - t0);
-      finalizeTurn(refs, full, hits, ms, s.relayBaseUrl);
-
-      // 履歴へ保存 (MailHit は SavedHit と同形)。
-      const saved = appendTurn(currentId, { q, answer: full, hits: hits as SavedHit[], ms });
-      // 新規セッションの最初の質問は、回答と同時に得たタイトル (TITLE 行) を採用。
-      if (saved.turns.length === 1 && aiTitle) setTitle(currentId, aiTitle);
-      refreshList();
+      save();
 
     } catch (err: unknown) {
-      if (err instanceof Error && err.name === 'AbortError') return;
+      if (signal.aborted || (err instanceof Error && err.name === 'AbortError')) {
+        save(); // 停止までに生成した分は確定・保存
+        return;
+      }
       refs.answerText.textContent = 'エラーが発生しました。';
       toast(root, `エラー: ${err instanceof Error ? err.message : String(err)}`, 'error');
     } finally {
-      sendBtn.disabled = false;
+      setGenerating(false);
       abort = null;
     }
   }
 
-  function appendSources(container: HTMLElement, hits: SavedHit[], relayBaseUrl: string): void {
+  async function submit(): Promise<void> {
+    if (generating) return;
+    const q = input.value.trim();
+    if (!q) return;
+    input.value = '';
+    autosize();
+    await converse({
+      displayQ: q,
+      llmQuestion: q,
+      loadingLabel: 'メールを検索中',
+      getHits: async () => {
+        const s = loadSettings();
+        const raw = await searchVectors(q, s, siteUrl, s.ragTopK);
+        // スコアしきい値で足切り。全部下回ったら最良 1 件だけ残す (取りこぼし防止)。
+        let filtered = raw.filter(h => h.score >= s.ragMinScore);
+        if (filtered.length === 0 && raw.length > 0) filtered = [raw[0]];
+        return filtered as SavedHit[];
+      },
+    });
+  }
+
+  /** 同一スレッド (conversationId) の全メールを時系列で要約する。 */
+  async function summarizeThread(hit: SavedHit): Promise<void> {
+    if (generating || !hit.conversationId) return;
+    await converse({
+      displayQ: `「${hit.subject}」の経緯`,
+      llmQuestion: '上記は同一スレッドのメールを古い順に並べたものです。やり取りの経緯・決定事項・現状・残課題を時系列で簡潔に要約してください。',
+      loadingLabel: 'スレッドを読み込み中',
+      getHits: async () => await getThread(siteUrl, hit.conversationId) as SavedHit[],
+    });
+  }
+
+  function appendSources(container: HTMLElement, hits: SavedHit[], relayBaseUrl: string, query = ''): void {
     // 既定は折りたたみ (collapsed)。ヘッダクリックで開閉。
     const hdrEl  = el('div', { class: 'tdr-sources-h collapsed' }, [
       el('span', { html: icons.chevron(14) }),
@@ -278,13 +409,21 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
         });
         head.appendChild(openBtn);
       }
+      if (h.conversationId) {
+        const sumBtn = el('button', {
+          class: 'tdr-hit-open', 'aria-label': '経緯を要約', title: '同じスレッドのやり取りを時系列で要約',
+          html: icons.list(14),
+        });
+        sumBtn.addEventListener('click', (e) => { e.stopPropagation(); void summarizeThread(h); });
+        head.appendChild(sumBtn);
+      }
       hitEl.appendChild(head);
       hitEl.appendChild(el('div', { class: 'tdr-hit-from' }, [
         `${h.from}  ${h.date.slice(0, 10)}`,
       ]));
-      hitEl.appendChild(el('div', { class: 'tdr-hit-snippet' }, [
-        plain.slice(0, 140) + (plain.length > 140 ? '…' : ''),
-      ]));
+      const snippetEl = el('div', { class: 'tdr-hit-snippet' });
+      highlightInto(snippetEl, plain.slice(0, 140) + (plain.length > 140 ? '…' : ''), query);
+      hitEl.appendChild(snippetEl);
 
       let detail: HTMLElement | null = null;
       hitEl.addEventListener('click', () => {
@@ -317,7 +456,16 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
       void submit();
     }
   });
-  sendBtn.addEventListener('click', () => void submit());
+  // 生成中は停止、それ以外は送信。
+  sendBtn.addEventListener('click', () => { if (generating) abort?.abort(); else void submit(); });
+
+  // 定型プロンプトチップ (クリックで入力欄に挿入)。
+  const QUICK_PROMPTS = ['最近の重要なお知らせは?', '今後のイベント・予定を教えて', '締め切り・期限のある依頼は?', 'システム・メンテナンスの予定は?'];
+  const chipsRow = el('div', { class: 'tdr-chips' }, QUICK_PROMPTS.map(p => {
+    const chip = el('button', { class: 'tdr-chip' }, [p]);
+    chip.addEventListener('click', () => { input.value = p; autosize(); input.focus(); });
+    return chip;
+  }));
 
   // ── レイアウト: 左ペイン | ドラッグ可能な仕切り | チャット ──
   thread.appendChild(emptyState);
@@ -334,6 +482,7 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     thread,
     el('div', { class: 'tdr-composer' }, [
       el('div', { class: 'tdr-composer-inner' }, [
+        chipsRow,
         buildModelPicker(),
         el('div', { class: 'tdr-note-form' }, [input, sendBtn]),
         el('div', { class: 'tdr-note-hint' }, ['⌘+Enter または Ctrl+Enter で送信']),

@@ -206,9 +206,30 @@ function buildSearchPane(pane: HTMLElement, draft: RuntimeSettings): void {
     }), '上位何件のメールを根拠にするか。デフォルト 8'),
     ...mkRow('最小スコア (0〜1)', mkInput(String(draft.ragMinScore), v => {
       const n = Number(v); draft.ragMinScore = isNaN(n) ? 0.3 : Math.min(1, Math.max(0, n));
-    }), 'cosine 類似度がこの値未満のメールは除外。デフォルト 0.3 (0 で無効)'),
+    }), 'スコアがこの値未満のメールは除外。デフォルト 0.3 (0 で無効)'),
   );
   pane.appendChild(grid);
+
+  // ハイブリッド検索の重み (キーワード ⇄ 意味)。
+  const wLabel = el('span', { class: 'mono' }, [draft.ragKeywordWeight.toFixed(2)]);
+  const slider = el('input', {
+    type: 'range', min: '0', max: '1', step: '0.05', value: String(draft.ragKeywordWeight),
+    style: 'flex:1',
+  }) as HTMLInputElement;
+  slider.addEventListener('input', () => {
+    draft.ragKeywordWeight = Math.min(1, Math.max(0, Number(slider.value)));
+    wLabel.textContent = draft.ragKeywordWeight.toFixed(2);
+  });
+  pane.appendChild(el('p', { class: 'tdr-pane-title', style: 'margin-top:var(--s-7)' }, ['ハイブリッド検索']));
+  pane.appendChild(el('p', { class: 'tdr-hint' }, [
+    '意味(ベクトル)とキーワード(文字bigram)を合成して並べ替えます。固有名詞・型番が多いならキーワード寄りに。',
+  ]));
+  pane.appendChild(el('div', { style: 'display:flex;align-items:center;gap:var(--s-4);margin-top:var(--s-3)' }, [
+    el('span', { class: 'tdr-hint' }, ['意味']),
+    slider,
+    el('span', { class: 'tdr-hint' }, ['キーワード']),
+    wLabel,
+  ]));
 }
 
 // ─── 取り込み ─────────────────────────────────────────────────────────────────

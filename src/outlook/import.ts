@@ -9,6 +9,8 @@ export interface OutlookMail {
   messageId: string;
   /** RFC2822 Internet-Message-Id。Outlook クライアントでの再検索に使う。 */
   internetMessageId?: string;
+  /** スレッド識別子 (Outlook ConversationID)。経緯要約のグルーピング用。 */
+  conversationId?: string;
   subject: string;
   from: string;
   to: string[];
@@ -66,6 +68,7 @@ export function toIngestMails(mails: OutlookMail[]): IngestMail[] {
   return mails.map(m => ({
     messageId: m.messageId || `<${m.date}|${m.from}>`,
     internetMessageId: m.internetMessageId || m.messageId || '',
+    conversationId: m.conversationId || '',
     subject: m.subject || '(件名なし)',
     from: m.from,
     to: m.to ?? [],

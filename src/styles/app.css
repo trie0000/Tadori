@@ -120,7 +120,7 @@
 #tadori-root .tdr-hit-open:disabled{opacity:.5;cursor:default;}
 #tadori-root .tdr-hit-from{font-size:var(--fs-sm);color:var(--ink-3);margin-top:var(--s-1);}
 #tadori-root .tdr-hit-snippet{font-size:var(--fs-md);color:var(--ink);margin-top:var(--s-2);line-height:1.6;}
-#tadori-root .tdr-hit mark{background:var(--hl);color:inherit;border-radius:2px;padding:0 1px;}
+#tadori-root .tdr-hit mark,#tadori-root .tdr-hit-snippet mark{background:var(--hl);color:inherit;border-radius:2px;padding:0 1px;}
 #tadori-root .tdr-hit-detail{margin-top:var(--s-5);padding-top:var(--s-5);border-top:1px solid var(--line);font-size:var(--fs-md);color:var(--ink);line-height:1.8;white-space:pre-wrap;}
 #tadori-root .tdr-empty{max-width:var(--thread-w);margin:10vh auto 0;text-align:center;color:var(--ink-3);}
 #tadori-root .tdr-empty .big{font-size:var(--fs-xl);color:var(--ink);margin-bottom:var(--s-3);}
@@ -141,6 +141,19 @@
 #tadori-root .tdr-note-submit{position:absolute;right:10px;bottom:9px;width:30px;height:30px;border:none;background:var(--accent);color:#fff;border-radius:var(--r-2);cursor:pointer;display:flex;align-items:center;justify-content:center;}
 #tadori-root .tdr-note-submit:hover{background:var(--accent-strong);}
 #tadori-root .tdr-note-submit:disabled{opacity:.4;cursor:default;}
+#tadori-root .tdr-note-submit.is-stop{background:var(--danger);}
+#tadori-root .tdr-note-submit.is-stop:hover{filter:brightness(.93);}
+/* 出典カードのジャンプ時ハイライト */
+#tadori-root .tdr-hit.is-flash{animation:tdr-flash 1.2s ease-out;}
+@keyframes tdr-flash{0%{background:var(--accent-soft);border-color:var(--accent-strong);}100%{background:var(--paper);}}
+/* 定型チップ / 質問サジェスト */
+#tadori-root .tdr-chips{display:flex;flex-wrap:wrap;gap:var(--s-2);margin-bottom:var(--s-3);}
+#tadori-root .tdr-chip{font:inherit;font-size:var(--fs-xs);color:var(--ink-3);background:var(--paper-2);border:1px solid var(--line);border-radius:99px;padding:3px 10px;cursor:pointer;}
+#tadori-root .tdr-chip:hover{color:var(--accent-strong);border-color:var(--accent-strong);background:var(--accent-soft);}
+#tadori-root .tdr-suggest{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-2);margin-top:var(--s-5);}
+#tadori-root .tdr-suggest-h{font-size:var(--fs-xs);color:var(--ink-4);margin-right:var(--s-2);}
+#tadori-root .tdr-suggest-chip{font:inherit;font-size:var(--fs-sm);color:var(--accent-strong);background:var(--accent-soft);border:1px solid transparent;border-radius:99px;padding:4px 12px;cursor:pointer;}
+#tadori-root .tdr-suggest-chip:hover{border-color:var(--accent-strong);}
 #tadori-root .tdr-note-hint{max-width:var(--thread-w);margin:var(--s-2) auto 0;font-size:var(--fs-xs);color:var(--ink-4);line-height:1;}
 
 #tadori-root .tdr-pill{display:inline-flex;align-items:center;gap:var(--s-2);height:26px;padding:0 10px;font-size:var(--fs-sm);border-radius:99px;border:1px solid var(--line-strong);background:var(--paper-2);color:var(--ink-3);}

@@ -4,6 +4,7 @@
 export interface SavedHit {
   messageId: string;
   internetMessageId: string;
+  conversationId: string;
   subject: string;
   from: string;
   date: string;

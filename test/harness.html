@@ -139,7 +139,7 @@ function sseResponse(fullText) {
   });
   return new Response(stream, { status:200, headers:{ 'Content-Type':'text/event-stream' } });
 }
-const MOCK_ANSWER = 'TITLE: 春の懇親会の詳細\n\n## 春の懇親会について\n\n- **日時**: 5 月 23 日(金) 18:30〜 [1]\n- **場所**: 本社 10F ラウンジ [1]\n- **会費**: 3,000 円 (当日受付) [1]\n\n出欠は **5 月 16 日まで** にメールで返信してください [1][2]。\n\n> 当日は軽食とドリンクを用意しています。';
+const MOCK_ANSWER = 'TITLE: 春の懇親会の詳細\n\n## 春の懇親会について\n\n- **日時**: 5 月 23 日(金) 18:30〜 [1]\n- **場所**: 本社 10F ラウンジ [1]\n- **会費**: 3,000 円 (当日受付) [1]\n\n出欠は **5 月 16 日まで** にメールで返信してください [1][2]。\n\n> 当日は軽食とドリンクを用意しています。\n\n@@SUGGEST@@ 会費はいくら? || 場所はどこ? || 出欠の締め切りは?';
 
 window.fetch = async (url, opts) => {
   const u = String(url);
@@ -160,6 +160,8 @@ window.fetch = async (url, opts) => {
     await new Promise(r => setTimeout(r, 150));
     const mails = MAILS.slice(0, 4).map(m => ({
       messageId: '<' + m.Id + '@example>', internetMessageId: '<' + m.Id + '@example>',
+      // 101/102 は同一スレッド (懇親会) として conversationId を共有
+      conversationId: (m.Id === 101 || m.Id === 102) ? 'conv-shinkan' : ('conv-' + m.Id),
       subject: m.Title, from: m.From,
       to: ['ml@example.co.jp'], cc: [], date: m.Created, body: m.Body,
     }));

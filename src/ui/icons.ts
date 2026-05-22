@@ -16,5 +16,7 @@ export const icons = {
   plus: (s?: number) => wrap('<path d="M12 5v14M5 12h14"/>', s),
   copy: (s?: number) => wrap('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>', s),
   check: (s?: number) => wrap('<path d="M20 6 9 17l-5-5"/>', s),
+  stop: (s?: number) => wrap('<rect x="6" y="6" width="12" height="12" rx="2"/>', s),
+  list: (s?: number) => wrap('<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>', s),
   message: (s?: number) => wrap('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>', s),
 };

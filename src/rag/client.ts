@@ -18,6 +18,7 @@ export interface RagSource {
 const SYSTEM_PROMPT = [
   'あなたは社内メーリングリストの過去ログに基づいて回答するアシスタントです。',
   '与えられた「参照メール」だけを根拠に、日本語で回答してください。',
+  '直前までの会話があれば文脈として踏まえ、フォローアップ質問にも答えてください。',
   '',
   '出力の1行目には必ず「TITLE: <この質問を表す15文字以内の短い見出し>」だけを書き、',
   '2行目以降に回答本文を書いてください。見出しに記号・引用符は付けないでください。',
@@ -30,6 +31,9 @@ const SYSTEM_PROMPT = [
   '',
   '根拠にしたメールは文末に [1] [2] のように出典番号を付けて示します。',
   '参照メールに答えが無い場合は、推測せず「該当するメールが見つかりませんでした」と正直に答えてください。',
+  '',
+  '回答の最後の行に必ず「@@SUGGEST@@ 質問1 || 質問2 || 質問3」の形式で、',
+  'この内容に関連する短いフォローアップ質問を3つ (各15文字程度) 付けてください。',
 ].join('\n');
 
 function buildUserPrompt(question: string, sources: RagSource[]): string {
@@ -38,6 +42,8 @@ function buildUserPrompt(question: string, sources: RagSource[]): string {
   ).join('\n\n---\n\n');
   return `参照メール:\n\n${ctx}\n\n---\n\n質問: ${question}`;
 }
+
+export interface ChatHistoryMsg { role: 'user' | 'assistant'; content: string; }
 
 function cleanTitle(t: string): string {
   return (t || '')
@@ -48,42 +54,74 @@ function cleanTitle(t: string): string {
 }
 
 const TITLE_MARK = 'TITLE:';
+const SUGGEST_MARK = '@@SUGGEST@@';
 
-/** ストリームの 1 行目 "TITLE: xxx" を拾い、本文だけを onDelta へ流すスプリッタ。
- *  モデルが指示に従わず本文から始めた場合は、そのまま本文として扱う。 */
-function makeTitleSplitter(onDelta: (t: string) => void, onTitle?: (t: string) => void) {
-  let raw = '';
+/** ストリームを整形するパーサ。
+ *  - 先頭の "TITLE: xxx" 行 → onTitle (本文には出さない)
+ *  - 末尾の "@@SUGGEST@@ a || b || c" → onSuggest (本文には出さない)
+ *  本文だけを onDelta へ流す。マーカーがチャンク境界で割れても拾えるよう末尾を保留する。 */
+function makeStreamParser(
+  onDelta: (t: string) => void,
+  onTitle?: (t: string) => void,
+  onSuggest?: (qs: string[]) => void,
+) {
+  let pre = '';            // タイトル検出前の蓄積
   let bodyStarted = false;
   let titleSent = false;
-  let body = '';
-  const emit = (text: string): void => { if (text) { body += text; onDelta(text); } };
+  let body = '';           // onDelta へ出した確定本文
+  let buf = '';            // 本文の全蓄積 (SUGGEST 検出用)
+  let suggestMode = false;
+  let suggestRaw = '';
+
+  function pushBody(text: string): void {
+    if (suggestMode) { suggestRaw += text; return; }
+    buf += text;
+    const idx = buf.indexOf(SUGGEST_MARK);
+    if (idx >= 0) {
+      const head = buf.slice(0, idx);
+      const toEmit = head.slice(body.length);
+      if (toEmit) { body += toEmit; onDelta(toEmit); }
+      suggestMode = true;
+      suggestRaw += buf.slice(idx + SUGGEST_MARK.length);
+      return;
+    }
+    // マーカーがチャンク境界で割れる可能性があるので末尾を保留。
+    const safe = Math.max(body.length, buf.length - (SUGGEST_MARK.length - 1));
+    const toEmit = buf.slice(body.length, safe);
+    if (toEmit) { body += toEmit; onDelta(toEmit); }
+  }
+
+  function emitSuggest(): void {
+    if (!suggestRaw || !onSuggest) return;
+    const qs = suggestRaw.split(/\|\||\n/).map(x => x.replace(/^[\s\-・*]+/, '').trim()).filter(Boolean).slice(0, 4);
+    if (qs.length) onSuggest(qs);
+  }
+
   return {
     feed(chunk: string): void {
-      if (bodyStarted) { emit(chunk); return; }
-      raw += chunk;
-      // raw が "TITLE:" と整合しているか (まだ短いなら前方一致で判定)。
-      const consistent = raw.length < TITLE_MARK.length
-        ? TITLE_MARK.startsWith(raw)
-        : raw.startsWith(TITLE_MARK);
-      if (!consistent) { bodyStarted = true; emit(raw); return; } // タイトル行ではない
-      const nl = raw.indexOf('\n');
-      if (nl === -1) return; // タイトル行がまだ完結していない → 何も出さない
-      const title = cleanTitle(raw.slice(0, nl).replace(/^TITLE:\s*/i, ''));
+      if (bodyStarted) { pushBody(chunk); return; }
+      pre += chunk;
+      const consistent = pre.length < TITLE_MARK.length ? TITLE_MARK.startsWith(pre) : pre.startsWith(TITLE_MARK);
+      if (!consistent) { bodyStarted = true; pushBody(pre); return; }
+      const nl = pre.indexOf('\n');
+      if (nl === -1) return;
+      const title = cleanTitle(pre.slice(0, nl).replace(/^TITLE:\s*/i, ''));
       if (title && !titleSent) { onTitle?.(title); titleSent = true; }
       bodyStarted = true;
-      emit(raw.slice(nl + 1).replace(/^\n+/, ''));
+      pushBody(pre.slice(nl + 1).replace(/^\n+/, ''));
     },
     flush(): void {
-      if (bodyStarted) return;
-      if (!raw.startsWith(TITLE_MARK)) emit(raw); // タイトル行未完のまま終了 → 本文扱い
-      bodyStarted = true;
+      if (!bodyStarted) { if (!pre.startsWith(TITLE_MARK)) pushBody(pre); bodyStarted = true; }
+      if (!suggestMode) { const tail = buf.slice(body.length); if (tail) { body += tail; onDelta(tail); } }
+      emitSuggest();
     },
     get body(): string { return body; },
   };
 }
 
 /** chat/completions をストリーミング呼び出し。onDelta で本文を逐次受け取る。
- *  onTitle で 1 行目のタイトルを受け取る (履歴タイトル用)。戻り値は本文。 */
+ *  onTitle で 1 行目のタイトル、onSuggest で末尾のフォローアップ質問を受け取る。
+ *  history で直前までの会話 (マルチターン文脈) を渡せる。戻り値は本文。 */
 export async function generateAnswer(
   question: string,
   sources: RagSource[],
@@ -91,17 +129,21 @@ export async function generateAnswer(
   onDelta: (text: string) => void,
   signal?: AbortSignal,
   onTitle?: (title: string) => void,
+  history?: ChatHistoryMsg[],
+  onSuggest?: (qs: string[]) => void,
 ): Promise<string> {
   const userPrompt = buildUserPrompt(question, sources);
-  const inputTokens = estimateTokens(SYSTEM_PROMPT) + estimateTokens(userPrompt);
-  const sep = makeTitleSplitter(onDelta, onTitle);
+  const hist = history ?? [];
+  const inputTokens = estimateTokens(SYSTEM_PROMPT) + estimateTokens(userPrompt)
+    + hist.reduce((n, m) => n + estimateTokens(m.content), 0);
+  const sep = makeStreamParser(onDelta, onTitle, onSuggest);
 
   if (s.provider === 'claude') {
     await streamClaude({
       apiKey: s.claudeApiKey,
       model: s.claudeModel,
       system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userPrompt }],
+      messages: [...hist, { role: 'user', content: userPrompt }],
       onText: (t) => sep.feed(t),
       signal,
     });
@@ -127,6 +169,7 @@ export async function generateAnswer(
     body: JSON.stringify({
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
+        ...hist,
         { role: 'user', content: userPrompt },
       ],
       stream: true,

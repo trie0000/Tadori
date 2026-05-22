@@ -346,9 +346,12 @@ function Read-MailItem {
             $body = [string]$Item.Body
         }
     } catch { try { $body = [string]$Item.Body } catch { } }
+    $convId = ''
+    try { $convId = [string]$Item.ConversationID } catch { }
     return @{
         messageId         = [string]$mid
         internetMessageId = [string]$mid
+        conversationId    = [string]$convId
         subject   = [string]$Item.Subject
         from      = [string]$from
         to        = @($toList)
