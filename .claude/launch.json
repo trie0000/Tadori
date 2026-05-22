@@ -6,6 +6,12 @@
       "runtimeExecutable": "python3",
       "runtimeArgs": ["-m", "http.server", "5601", "--directory", "mockups"],
       "port": 5601
+    },
+    {
+      "name": "harness",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "5602"],
+      "port": 5602
     }
   ]
 }

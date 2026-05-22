@@ -1,16 +1,23 @@
 // 設定ハブ — Spira と同じ左ナビ + 右ペイン構成。
-// AI 接続設定は spira:ai:corp:* キーで Spira と共有。
+// AI 接続設定は spira:ai:* キーで Spira と共有。
+// 開発者モード時のみ Claude API / Voyage 埋め込みの設定とテストデータ投入を表示。
 
 import { el } from '../lib/dom';
 import { icons } from './icons';
 import { openModal } from './modal';
 import { toast } from './toast';
-import { loadSettings, saveSettings, parseAddressList, type RuntimeSettings } from '../api/aiSettings';
-import { embedQuery } from '../embeddings/client';
+import {
+  loadSettings, saveSettings, parseAddressList,
+  DEFAULT_CLAUDE_MODEL, DEFAULT_VOYAGE_MODEL,
+  type RuntimeSettings, type Provider,
+} from '../api/aiSettings';
+import { isDeveloperMode, setDeveloperMode } from '../utils/devMode';
+import { embedQueryFor } from '../embeddings/router';
+import { seedTestData, SAMPLE_MAILS } from '../dev/seed';
 
-type SectionId = 'ai' | 'ingest' | 'display' | 'diag' | 'about';
+type SectionId = 'ai' | 'ingest' | 'display' | 'diag' | 'dev' | 'about';
 
-export function openSettingsHub(root: HTMLElement): void {
+export function openSettingsHub(root: HTMLElement, siteUrl: string): void {
   const draft: RuntimeSettings = { ...loadSettings() };
 
   const nav  = el('div', { class: 'tdr-hub-nav' });
@@ -21,6 +28,7 @@ export function openSettingsHub(root: HTMLElement): void {
     { id: 'ingest',  label: '取り込み', icon: icons.activity() },
     { id: 'display', label: '表示',     icon: icons.moon()     },
     { id: 'diag',    label: '診断',     icon: icons.search()   },
+    { id: 'dev',     label: '開発者',   icon: icons.activity() },
     { id: 'about',   label: 'About',    icon: icons.chevron()  },
   ];
 
@@ -43,6 +51,7 @@ export function openSettingsHub(root: HTMLElement): void {
       case 'ingest':  buildIngestPane(pane, draft); break;
       case 'display': buildDisplayPane(pane, root); break;
       case 'diag':    buildDiagPane(pane, draft, root); break;
+      case 'dev':     buildDevPane(pane, draft, root, siteUrl); break;
       case 'about':   buildAboutPane(pane); break;
     }
   }
@@ -65,8 +74,8 @@ export function openSettingsHub(root: HTMLElement): void {
 
 // ─── 共通ヘルパ ───────────────────────────────────────────────────────────────
 
-function mkInput(value: string, onchange: (v: string) => void): HTMLInputElement {
-  const inp = el('input', { class: 'tdr-input', type: 'text', value });
+function mkInput(value: string, onchange: (v: string) => void, type = 'text'): HTMLInputElement {
+  const inp = el('input', { class: 'tdr-input', type, value });
   inp.addEventListener('change', () => onchange(inp.value));
   return inp;
 }
@@ -81,29 +90,67 @@ function mkRow(label: string, ctrl: HTMLElement, hint?: string): HTMLElement[] {
 
 function buildAiPane(pane: HTMLElement, draft: RuntimeSettings): void {
   pane.appendChild(el('p', { class: 'tdr-pane-title' }, ['AI 接続']));
+  const dev = isDeveloperMode();
 
-  const grid = el('div', { class: 'tdr-fieldgrid' });
-  grid.appendChild(el('p', { class: 'tdr-shared-note' }, [
+  // dev OFF なのに claude が選ばれていたら corp に丸める
+  if (!dev && draft.provider === 'claude') draft.provider = 'corp';
+
+  // ── provider セレクタ ──
+  const select = el('select', { class: 'tdr-input' });
+  const optCorp = el('option', { value: 'corp' }, ['社内 AI (Azure OpenAI 互換)']);
+  if (draft.provider === 'corp') optCorp.setAttribute('selected', 'selected');
+  select.appendChild(optCorp);
+  if (dev) {
+    const optClaude = el('option', { value: 'claude' }, ['Claude (Anthropic) — 開発者モード']);
+    if (draft.provider === 'claude') optClaude.setAttribute('selected', 'selected');
+    select.appendChild(optClaude);
+  }
+
+  const provGrid = el('div', { class: 'tdr-fieldgrid' });
+  provGrid.append(...mkRow('プロバイダ', select, dev ? '開発者モードでは Claude を選べます' : undefined));
+  pane.appendChild(provGrid);
+
+  pane.appendChild(el('p', { class: 'tdr-shared-note', style: 'margin:var(--s-5) 0' }, [
     '★ Spira と共有される設定です。どちらで変更しても両方のツールに反映されます。',
   ]));
 
-  const relayInp = mkInput(draft.relayBaseUrl,          v => { draft.relayBaseUrl = v; });
-  const keyInp   = mkInput(draft.apiKey,                v => { draft.apiKey = v; });
-  keyInp.type = 'password';
-  const chatInp  = mkInput(draft.chatDeployment,        v => { draft.chatDeployment = v; });
-  const embInp   = mkInput(draft.embeddingDeployment,   v => { draft.embeddingDeployment = v; });
-  const verInp   = mkInput(draft.apiVersion,            v => { draft.apiVersion = v; });
-  const dimInp   = mkInput(String(draft.dimensions),    v => { draft.dimensions = Number(v) || 256; });
-
-  grid.append(
-    ...mkRow('中継サーバ URL', relayInp, '例: http://localhost:18080'),
-    ...mkRow('API キー', keyInp,         'サブスクリプションキー (省略可)'),
-    ...mkRow('チャットモデル', chatInp,  'RAG 回答用デプロイ名 (例: gpt-4o-mini)'),
-    ...mkRow('埋め込みモデル', embInp,   '検索用デプロイ名 (例: text-embedding-3-small)'),
-    ...mkRow('API バージョン', verInp,   '例: 2024-02-01'),
-    ...mkRow('次元数', dimInp,           'Matryoshka 短縮次元数 (ADR-004 で 256)'),
+  // ── corp ブロック ──
+  const corpGrid = el('div', { class: 'tdr-fieldgrid' });
+  corpGrid.append(
+    ...mkRow('中継サーバ URL', mkInput(draft.relayBaseUrl, v => { draft.relayBaseUrl = v; }), '例: http://localhost:18080'),
+    ...mkRow('API キー', mkInput(draft.apiKey, v => { draft.apiKey = v; }, 'password'), 'サブスクリプションキー (省略可)'),
+    ...mkRow('チャットモデル', mkInput(draft.chatDeployment, v => { draft.chatDeployment = v; }), 'RAG 回答用デプロイ名 (例: gpt-4o-mini)'),
+    ...mkRow('埋め込みモデル', mkInput(draft.embeddingDeployment, v => { draft.embeddingDeployment = v; }), '検索用デプロイ名 (例: text-embedding-3-small)'),
+    ...mkRow('API バージョン', mkInput(draft.apiVersion, v => { draft.apiVersion = v; }), '例: 2024-02-01'),
+    ...mkRow('次元数', mkInput(String(draft.dimensions), v => { draft.dimensions = Number(v) || 256; }), 'Matryoshka 短縮次元数 (256)'),
   );
-  pane.appendChild(grid);
+  const corpBlock = el('div', {}, [corpGrid]);
+
+  // ── claude / voyage ブロック (dev のみ) ──
+  const claudeBlock = el('div', {});
+  if (dev) {
+    const cGrid = el('div', { class: 'tdr-fieldgrid' });
+    cGrid.append(
+      el('p', { class: 'tdr-hint', style: 'grid-column:1/-1;margin-bottom:var(--s-2)' }, ['── Claude (回答生成) ──']),
+      ...mkRow('Claude API キー', mkInput(draft.claudeApiKey, v => { draft.claudeApiKey = v; }, 'password'), 'sk-ant-... (この端末のみ保存)'),
+      ...mkRow('Claude モデル', mkInput(draft.claudeModel, v => { draft.claudeModel = v; }), `既定: ${DEFAULT_CLAUDE_MODEL}`),
+      el('p', { class: 'tdr-hint', style: 'grid-column:1/-1;margin:var(--s-3) 0 var(--s-2)' }, ['── Voyage (検索埋め込み) ──']),
+      ...mkRow('Voyage API キー', mkInput(draft.voyageApiKey, v => { draft.voyageApiKey = v; }, 'password'), 'pa-... Claude に埋め込み API が無いため'),
+      ...mkRow('Voyage モデル', mkInput(draft.voyageModel, v => { draft.voyageModel = v; }), `既定: ${DEFAULT_VOYAGE_MODEL}`),
+      ...mkRow('次元数', mkInput(String(draft.dimensions), v => { draft.dimensions = Number(v) || 256; }), 'output_dimension (256/512/1024)'),
+    );
+    claudeBlock.appendChild(cGrid);
+  }
+
+  pane.append(corpBlock, claudeBlock);
+
+  function sync(): void {
+    const p = select.value as Provider;
+    corpBlock.style.display   = p === 'corp' ? '' : 'none';
+    claudeBlock.style.display = p === 'claude' ? '' : 'none';
+  }
+  select.addEventListener('change', () => { draft.provider = select.value as Provider; sync(); });
+  sync();
 }
 
 // ─── 取り込み ─────────────────────────────────────────────────────────────────
@@ -112,20 +159,16 @@ function buildIngestPane(pane: HTMLElement, draft: RuntimeSettings): void {
   pane.appendChild(el('p', { class: 'tdr-pane-title' }, ['取り込み']));
 
   const grid = el('div', { class: 'tdr-fieldgrid' });
-
-  const listInp  = mkInput(draft.listTitle, v => { draft.listTitle = v; });
-  const intInp   = mkInput(String(draft.ingestIntervalSec), v => { draft.ingestIntervalSec = Number(v) || 30; });
-
   const addrArea = el('textarea', { class: 'tdr-input', rows: '4' });
   addrArea.value = draft.mlAddresses.join('\n');
   addrArea.addEventListener('change', () => { draft.mlAddresses = parseAddressList(addrArea.value); });
 
   grid.append(
-    ...mkRow('List 表示名', listInp, '例: 受信メールリスト'),
+    ...mkRow('List 表示名', mkInput(draft.listTitle, v => { draft.listTitle = v; }), '例: 受信メールリスト'),
     el('label', { class: 'top' }, ['ML アドレス']),
     addrArea,
     el('p', { class: 'tdr-hint' }, ['取り込み対象アドレス。1 行に 1 件。']),
-    ...mkRow('取り込み間隔 (秒)', intInp, 'デフォルト 30 秒'),
+    ...mkRow('取り込み間隔 (秒)', mkInput(String(draft.ingestIntervalSec), v => { draft.ingestIntervalSec = Number(v) || 30; }), 'デフォルト 30 秒'),
   );
   pane.appendChild(grid);
 }
@@ -139,7 +182,6 @@ function buildDisplayPane(pane: HTMLElement, root: HTMLElement): void {
     el('span', { html: icons.moon() }),
     el('span', {}, [root.dataset.theme === 'dark' ? 'ダークモード: ON' : 'ダークモード: OFF']),
   ]);
-
   toggleBtn.addEventListener('click', () => {
     const isDark = root.dataset.theme === 'dark';
     root.dataset.theme = isDark ? '' : 'dark';
@@ -147,7 +189,6 @@ function buildDisplayPane(pane: HTMLElement, root: HTMLElement): void {
     const lbl = toggleBtn.querySelector('span:last-child');
     if (lbl) lbl.textContent = isDark ? 'ダークモード: OFF' : 'ダークモード: ON';
   });
-
   pane.appendChild(el('div', { style: 'margin-top:var(--s-3)' }, [toggleBtn]));
 }
 
@@ -168,50 +209,88 @@ function buildDiagPane(pane: HTMLElement, draft: RuntimeSettings, root: HTMLElem
     };
   }
 
-  const relay = mkDiagRow('中継サーバ接続');
-  const embed = mkDiagRow('埋め込み API');
-
-  const runBtn = el('button', { class: 'tdr-btn tdr-btn--primary', style: 'margin-top:var(--s-6)' }, ['テスト実行']);
+  const embed = mkDiagRow(draft.provider === 'claude' ? '埋め込み (Voyage)' : '埋め込み (中継)');
+  const runBtn = el('button', { class: 'tdr-btn tdr-btn--primary', style: 'margin-top:var(--s-6)' }, ['埋め込みテスト']);
 
   runBtn.addEventListener('click', () => {
     runBtn.disabled = true;
-    relay.set(false, '確認中…');
     embed.set(false, '確認中…');
-
     void (async () => {
-      // 中継サーバ ping
-      const ac    = new AbortController();
-      const timer = setTimeout(() => ac.abort(), 5000);
       try {
-        const res = await fetch(`${draft.relayBaseUrl}/`, { method: 'GET', credentials: 'omit', signal: ac.signal });
-        clearTimeout(timer);
-        relay.set(true, `HTTP ${res.status}`);
-      } catch (e) {
-        clearTimeout(timer);
-        relay.set(false, e instanceof Error ? e.message.slice(0, 60) : 'failed');
-      }
-
-      // 埋め込みテスト
-      try {
-        const vec = await embedQuery('テスト', draft, { apiKey: draft.apiKey });
+        const vec = await embedQueryFor('テスト', draft);
         embed.set(true, `OK — dim: ${vec.length}`);
       } catch (e) {
-        embed.set(false, e instanceof Error ? e.message.slice(0, 60) : 'failed');
+        embed.set(false, e instanceof Error ? e.message.slice(0, 80) : 'failed');
         toast(root, `埋め込みテスト失敗: ${e instanceof Error ? e.message : ''}`, 'error');
       }
-
       runBtn.disabled = false;
     })();
   });
 
-  pane.append(relay.row, embed.row, runBtn);
+  pane.append(embed.row, runBtn);
+}
+
+// ─── 開発者 ─────────────────────────────────────────────────────────────────────
+
+function buildDevPane(
+  pane: HTMLElement,
+  draft: RuntimeSettings,
+  root: HTMLElement,
+  siteUrl: string,
+): void {
+  pane.appendChild(el('p', { class: 'tdr-pane-title' }, ['開発者']));
+
+  // 開発者モードトグル (即時保存)
+  const checkbox = el('input', { type: 'checkbox' });
+  if (isDeveloperMode()) checkbox.checked = true;
+  checkbox.addEventListener('change', () => {
+    setDeveloperMode(checkbox.checked);
+    toast(root, checkbox.checked ? '開発者モード ON' : '開発者モード OFF', 'info');
+  });
+  pane.appendChild(el('label', {
+    style: 'display:inline-flex;align-items:center;gap:var(--s-3);cursor:pointer;padding:var(--s-3);background:var(--paper-2);border-radius:var(--r-2)',
+  }, [checkbox, el('span', { style: 'font-size:var(--fs-md)' }, ['開発者モードを有効にする (Claude API / テスト投入)'])]));
+
+  pane.appendChild(el('p', { class: 'tdr-hint', style: 'margin-top:var(--s-3)' }, [
+    '※ 端末ローカル (localStorage) に保存。AI 接続で Claude を選べるようになります。',
+  ]));
+
+  // テストデータ投入
+  pane.appendChild(el('p', { class: 'tdr-pane-title', style: 'margin-top:var(--s-7)' }, [`テストデータ投入 (${SAMPLE_MAILS.length} 件)`]));
+  pane.appendChild(el('p', { class: 'tdr-hint', style: 'margin-bottom:var(--s-4)' }, [
+    `現在の provider で本文を埋め込み、List「${draft.listTitle}」へサンプルメールを作成します。`,
+  ]));
+
+  const status = el('div', { style: 'font-size:var(--fs-sm);color:var(--ink-3);margin-top:var(--s-3)' }, ['']);
+  const seedBtn = el('button', { class: 'tdr-btn tdr-btn--primary' }, ['サンプルメールを投入']);
+
+  seedBtn.addEventListener('click', () => {
+    if (!confirm(`List「${draft.listTitle}」に ${SAMPLE_MAILS.length} 件のテストメールを作成します。よろしいですか?`)) return;
+    seedBtn.disabled = true;
+    status.textContent = '埋め込み中…';
+    void (async () => {
+      try {
+        const r = await seedTestData(draft, siteUrl, (done, total) => {
+          status.textContent = `投入中… ${done}/${total}`;
+        });
+        status.textContent = `完了: ${r.created} 件作成` + (r.errors.length ? ` / ${r.errors.length} 件失敗` : '');
+        toast(root, `テストデータ ${r.created} 件を投入しました`, r.errors.length ? 'error' : 'info');
+        if (r.errors.length) console.warn('[tadori/seed] errors:', r.errors);
+      } catch (e) {
+        status.textContent = '失敗';
+        toast(root, `投入失敗: ${e instanceof Error ? e.message : String(e)}`, 'error');
+      }
+      seedBtn.disabled = false;
+    })();
+  });
+
+  pane.append(seedBtn, status);
 }
 
 // ─── About ────────────────────────────────────────────────────────────────────
 
 function buildAboutPane(pane: HTMLElement): void {
   pane.appendChild(el('p', { class: 'tdr-pane-title' }, ['About']));
-
   const grid = el('div', { class: 'tdr-fieldgrid' });
   grid.append(
     el('label', {}, ['バージョン']),

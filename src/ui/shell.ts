@@ -37,7 +37,7 @@ export function boot(): void {
     root.dataset.theme = isDark ? '' : 'dark';
     localStorage.setItem('tadori:theme', isDark ? '' : 'dark');
   });
-  settBtn.addEventListener('click',  () => openSettingsHub(root));
+  settBtn.addEventListener('click',  () => openSettingsHub(root, siteUrl));
   closeBtn.addEventListener('click', () => root.remove());
 
   const topbar = el('div', { class: 'tdr-topbar' }, [

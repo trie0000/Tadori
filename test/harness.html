@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tadori テストハーネス</title>
+<style>
+  body { margin: 0; font-family: system-ui, sans-serif; background: #ddd; }
+  .tdr-host-note {
+    position: fixed; left: 12px; bottom: 12px; z-index: 10;
+    background: #222; color: #fff; font-size: 12px; line-height: 1.6;
+    padding: 8px 12px; border-radius: 6px; max-width: 360px; opacity: .9;
+  }
+  .tdr-host-note b { color: #ffd479; }
+  .tdr-host-note code { color: #9cdcfe; }
+</style>
+</head>
+<body>
+<div class="tdr-host-note" id="note">
+  <b>Tadori テストハーネス</b><br>
+  SharePoint List はモック。AI は設定次第:<br>
+  ・provider=社内AI → 全モック (回答は固定文)<br>
+  ・provider=Claude (開発者モード) → <b>実 Claude + 実 Voyage</b><br>
+  歯車 → 開発者モード ON → AI 接続で Claude を選び、Claude / Voyage キーを入力。
+</div>
+
+<script>
+// ─── dist/tadori.js が走る前にモックを仕込む ────────────────────────────────
+window._spPageContextInfo = { webAbsoluteUrl: location.origin };
+
+// float16 エンコーダ (src/lib/float16.ts と同等)
+function f32ToF16Bits(value) {
+  const f32 = new Float32Array(1), i32 = new Int32Array(f32.buffer);
+  f32[0] = value; const x = i32[0];
+  const sign = (x >>> 16) & 0x8000;
+  let exp = ((x >>> 23) & 0xff) - 127 + 15;
+  let mant = x & 0x7fffff;
+  if (exp <= 0) { if (exp < -10) return sign; mant = (mant | 0x800000) >> (1 - exp); return sign | (mant >> 13); }
+  if (exp >= 0x1f) return sign | 0x7c00;
+  return sign | (exp << 10) | (mant >> 13);
+}
+function encodeEmbedding(vec) {
+  const u16 = new Uint16Array(vec.length);
+  for (let i = 0; i < vec.length; i++) u16[i] = f32ToF16Bits(vec[i]);
+  const bytes = new Uint8Array(u16.buffer);
+  let bin = ''; for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+function rng(seed) {
+  return function () {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// サンプルメール (src/dev/seed.ts と同じ 8 件)
+const MAILS = [
+  { Id:101, Title:'【総務】春の懇親会のご案内', From:'soumu@example.co.jp', Created:'2026-04-18T09:12:00Z',
+    Body:'お疲れさまです、総務部です。\n春の懇親会を 5 月 23 日(金) 18:30 より本社 10F ラウンジにて開催します。会費は 3,000 円、当日受付にて集金します。出欠は 5 月 16 日までにこのメールへ返信してください。当日は軽食とドリンクをご用意しています。' },
+  { Id:102, Title:'Re: 春の懇親会のご案内', From:'tanaka@example.co.jp', Created:'2026-04-19T02:40:00Z',
+    Body:'田中です。懇親会、出席します。場所は 10F ラウンジで合っていますか? 18:30 開始だと少し遅れるかもしれません。' },
+  { Id:103, Title:'【情シス】社内 Wi-Fi メンテナンスのお知らせ', From:'it-support@example.co.jp', Created:'2026-04-15T11:00:00Z',
+    Body:'情報システム部です。5 月 20 日(火) 22:00〜24:00 に社内 Wi-Fi のメンテナンスを実施します。該当時間帯は無線接続が断続的に切断されます。有線接続は影響ありません。' },
+  { Id:104, Title:'経費精算システム切替の件', From:'keiri@example.co.jp', Created:'2026-04-10T07:30:00Z',
+    Body:'経理部です。6 月 1 日より経費精算システムを新システムへ切り替えます。旧システムでの申請は 5 月 25 日締め切りです。マニュアルは共有フォルダに格納しました。' },
+  { Id:105, Title:'【人事】健康診断の予約について', From:'jinji@example.co.jp', Created:'2026-04-08T05:00:00Z',
+    Body:'人事部です。今年度の定期健康診断の予約を開始しました。予約サイトより 5 月末までにご予約ください。受診期間は 6 月 1 日〜30 日です。' },
+  { Id:106, Title:'【総務】オフィス移転に伴う座席変更', From:'soumu@example.co.jp', Created:'2026-04-05T01:00:00Z',
+    Body:'総務部です。7 月のオフィス移転に伴い、各部署の座席レイアウトを変更します。新しい座席表は来週共有します。私物は 6 月末までに整理をお願いします。' },
+  { Id:107, Title:'プロジェクト定例の時間変更', From:'pm@example.co.jp', Created:'2026-04-03T06:00:00Z',
+    Body:'お疲れさまです。来週からプロジェクト定例を毎週火曜 10:00 → 水曜 15:00 に変更します。カレンダー招待を更新しましたのでご確認ください。' },
+  { Id:108, Title:'【セキュリティ】不審メールに関する注意喚起', From:'security@example.co.jp', Created:'2026-04-01T03:00:00Z',
+    Body:'セキュリティ室です。請求書を装った不審なメールが社内で確認されています。添付ファイルや URL は開かず、情シスへ転送して報告してください。' },
+];
+
+// 設定の読み取り (bundle と同じ localStorage キー)
+function ls(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } }
+function isClaudeMode() {
+  return ls('tadori:developer-mode','') === '1'
+      && ls('spira:ai:provider','') === 'claude'
+      && !!ls('tadori:voyage:key','');
+}
+function dims() { return Number(ls('tadori:dimensions','256')) || 256; }
+
+function jsonResponse(obj, status = 200) {
+  return new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json' } });
+}
+
+const realFetch = window.fetch.bind(window);
+
+// 実 Voyage でドキュメント埋め込み
+async function voyageEmbedDocs(texts) {
+  const res = await realFetch('https://api.voyageai.com/v1/embeddings', {
+    method:'POST',
+    headers:{ Authorization:`Bearer ${ls('tadori:voyage:key','')}`, 'content-type':'application/json' },
+    body: JSON.stringify({ input: texts, model: ls('tadori:voyage:model','voyage-3.5-lite'), input_type:'document', output_dimension: dims() }),
+  });
+  if (!res.ok) throw new Error('voyage docs HTTP ' + res.status + ' ' + (await res.text()).slice(0,200));
+  const j = await res.json();
+  const out = new Array(texts.length);
+  j.data.forEach(d => { out[d.index] = d.embedding; });
+  return out;
+}
+
+// List アイテムを構築 (claude モードは実 Voyage、それ以外は乱数)。キャッシュあり。
+let listCache = null, listCacheKey = '';
+async function buildListItems() {
+  const claude = isClaudeMode();
+  const key = claude ? ('voyage:' + ls('tadori:voyage:model','') + ':' + dims()) : 'random';
+  if (listCache && listCacheKey === key) return listCache;
+
+  let vecs;
+  if (claude) {
+    vecs = await voyageEmbedDocs(MAILS.map(m => m.Body));
+  } else {
+    const D = dims();
+    vecs = MAILS.map((_, i) => { const r = rng(1000 + i), v = new Array(D); for (let j=0;j<D;j++) v[j]=r()*2-1; return v; });
+  }
+  listCache = MAILS.map((m, i) => ({
+    Id:m.Id, Title:m.Title, From:m.From, Created:m.Created, Body:m.Body,
+    embedding: encodeEmbedding(vecs[i]),
+  }));
+  listCacheKey = key;
+  return listCache;
+}
+
+// 社内AI(モック)用の固定回答 SSE
+function sseResponse(fullText) {
+  const chunks = fullText.match(/.{1,8}/gs) || [];
+  const enc = new TextEncoder(); let i = 0;
+  const stream = new ReadableStream({
+    pull(c) {
+      if (i < chunks.length) c.enqueue(enc.encode(`data: ${JSON.stringify({choices:[{delta:{content:chunks[i++]}}]})}\n\n`));
+      else { c.enqueue(enc.encode('data: [DONE]\n\n')); c.close(); }
+    },
+  });
+  return new Response(stream, { status:200, headers:{ 'Content-Type':'text/event-stream' } });
+}
+const MOCK_ANSWER = '春の懇親会は 5 月 23 日(金) の 18:30 から、本社 10F ラウンジで開催されます [1]。会費は 3,000 円で当日受付にて集金されます [1]。出欠は 5 月 16 日までにメールで返信してください [1][2]。';
+
+window.fetch = async (url, opts) => {
+  const u = String(url);
+
+  // 実 API (Claude / Voyage) はそのまま通す
+  if (u.includes('api.anthropic.com') || u.includes('api.voyageai.com')) return realFetch(url, opts);
+
+  // SharePoint List 取得 → 常にモック
+  if (u.includes('/_api/web/lists')) {
+    try {
+      const value = await buildListItems();
+      await new Promise(r => setTimeout(r, 80));
+      return jsonResponse({ value });
+    } catch (e) {
+      return jsonResponse({ 'odata.error': { message: { value: String(e) } } }, 500);
+    }
+  }
+  // 中継サーバ経由 (社内AIモック時のみ到達)
+  if (u.includes('/openai/') && u.includes('/embeddings')) {
+    const D = dims(); const r = rng(7), q = new Array(D); for (let j=0;j<D;j++) q[j]=r()*2-1;
+    return jsonResponse({ data:[{ index:0, embedding:q }] });
+  }
+  if (u.includes('/chat/completions')) {
+    await new Promise(r => setTimeout(r, 150));
+    return sseResponse(MOCK_ANSWER);
+  }
+  return realFetch(url, opts);
+};
+
+console.log('[harness] モード:', isClaudeMode() ? '実 Claude + 実 Voyage' : '全モック (社内AI)');
+</script>
+
+<script src="/dist/tadori.js"></script>
+</body>
+</html>

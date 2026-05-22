@@ -55,6 +55,26 @@ export class SharePointClient {
     return json.value ?? [];
   }
 
+  /** 新規アイテムを作成。fields は列の内部名 → 値。作成された Id を返す。 */
+  async createItem(listTitle: string, fields: Record<string, unknown>): Promise<number> {
+    const digest = await this.getFormDigest();
+    const res = await fetch(`${this.listApi(listTitle)}/items`, {
+      method: 'POST',
+      headers: await this.headers({
+        'Content-Type': 'application/json;odata=nometadata',
+        'X-RequestDigest': digest,
+      }),
+      credentials: 'include',
+      body: JSON.stringify(fields),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`createItem HTTP ${res.status} ${body.slice(0, 300)}`);
+    }
+    const json = await res.json() as { Id?: number };
+    return json.Id ?? 0;
+  }
+
   /** 単一アイテムを ETag 付きで取得 (try-claim の前段)。 */
   async getItem(listTitle: string, id: number, select?: string): Promise<SpItem> {
     const sel = select ? `?$select=${select}` : '';

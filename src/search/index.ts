@@ -3,7 +3,7 @@
 
 import type { RuntimeSettings } from '../api/aiSettings';
 import { SharePointClient } from '../sharepoint/client';
-import { embedQuery } from '../embeddings/client';
+import { embedQueryFor } from '../embeddings/router';
 import { decodeEmbedding } from '../lib/float16';
 import { normalize, search as cosineSearch, type IndexedVector } from './cosine';
 import { COLUMNS } from '../config';
@@ -56,7 +56,7 @@ export async function searchMails(
   const index = await loadIndex(sp, s);
   if (index.length === 0) return [];
 
-  const qvec = normalize(await embedQuery(question, s, { apiKey: s.apiKey }));
+  const qvec = normalize(await embedQueryFor(question, s));
 
   const hits = cosineSearch(qvec, index, topK);
   const byId = new Map(index.map(m => [m.messageId, m]));

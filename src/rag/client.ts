@@ -2,6 +2,7 @@
 // 上位メールを文脈に詰め、出典 [n] 付きの回答をストリーミングで返す。
 
 import type { RuntimeSettings } from '../api/aiSettings';
+import { streamClaude } from '../api/aiClaude';
 
 export interface RagSource {
   /** 1 始まりの出典番号 (回答中の [n] と対応)。 */
@@ -34,6 +35,17 @@ export async function generateAnswer(
   onDelta: (text: string) => void,
   signal?: AbortSignal,
 ): Promise<string> {
+  if (s.provider === 'claude') {
+    return streamClaude({
+      apiKey: s.claudeApiKey,
+      model: s.claudeModel,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: buildUserPrompt(question, sources) }],
+      onText: onDelta,
+      signal,
+    });
+  }
+
   const url = `${s.relayBaseUrl.replace(/\/+$/, '')}`
     + `/openai/deployments/${encodeURIComponent(s.chatDeployment)}`
     + `/chat/completions?api-version=${encodeURIComponent(s.apiVersion)}`;
