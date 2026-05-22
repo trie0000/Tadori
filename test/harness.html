@@ -163,7 +163,8 @@ window.fetch = async (url, opts) => {
 
   // ベクトルDB セグメント (新方式) — ステートフルな疑似ファイルストア
   // (PUT で保存・GET で返す)。最初は空 → 投入で manifest/seg が作られる。
-  if (u.includes('/folders/addUsingPath')) return jsonResponse({ ok: true }); // ensureFolder
+  if (u.includes('GetFolderByServerRelativeUrl') && u.includes('Exists')) return jsonResponse({ Exists: false }); // ensureFolder 存在確認
+  if (u.includes('/_api/web/folders')) return jsonResponse({ ok: true }); // ensureFolder 作成 (addUsingPath / 直接POST 両対応)
   if (u.includes('GetFolderByServerRelativeUrl') && u.includes('/Files/add')) {
     const m = u.match(/add\(url='([^']+)'/);
     const name = m ? decodeURIComponent(m[1]) : null;

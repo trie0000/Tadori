@@ -222,22 +222,37 @@ export class SharePointClient {
     try { return new URL(this.siteUrl).pathname.replace(/\/+$/, ''); } catch { return ''; }
   }
 
-  /** フォルダが無ければ作成 (親も含めて段階的に)。serverRelativeUrl は site 込み。 */
+  /** フォルダが無ければ作成。serverRelativeUrl は site 込み (例 /sites/X/Shared Documents/Tadori)。
+   *  存在確認 → 無ければ classic な verbose POST で作成 (addUsingPath は環境により 400)。 */
   async ensureFolder(serverRelativeUrl: string): Promise<void> {
+    // 既に存在するか確認 (存在すれば 200 + Exists:true)
+    try {
+      const check = await fetch(
+        `${this.siteUrl}/_api/web/GetFolderByServerRelativeUrl('${encodeURIComponent(serverRelativeUrl)}')?$select=Exists`,
+        { headers: await this.headers(), credentials: 'include' },
+      );
+      if (check.ok) {
+        const j = await check.json() as { Exists?: boolean };
+        if (j.Exists) return;
+      }
+    } catch { /* 確認に失敗しても作成を試す */ }
+
     const digest = await this.getFormDigest();
-    const res = await fetch(
-      `${this.siteUrl}/_api/web/folders/addUsingPath(decodedurl='${encodeURIComponent(serverRelativeUrl)}')`,
-      {
-        method: 'POST',
-        headers: await this.headers({ 'Content-Type': 'application/json;odata=nometadata', 'X-RequestDigest': digest }),
-        credentials: 'include',
+    const res = await fetch(`${this.siteUrl}/_api/web/folders`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json;odata=verbose',
+        'Content-Type': 'application/json;odata=verbose',
+        'X-RequestDigest': digest,
       },
-    );
-    // 既に存在 (409/500) は無視。それ以外の失敗のみ投げる。
-    if (!res.ok && res.status !== 409 && res.status !== 500) {
-      const body = await res.text().catch(() => '');
-      throw new Error(`ensureFolder HTTP ${res.status} ${body.slice(0, 200)}`);
-    }
+      credentials: 'include',
+      body: JSON.stringify({ __metadata: { type: 'SP.Folder' }, ServerRelativeUrl: serverRelativeUrl }),
+    });
+    if (res.ok) return;
+    // 既に存在する系は成功扱い (冪等)
+    const body = await res.text().catch(() => '');
+    if (res.status === 409 || /exist|既に|already/i.test(body)) return;
+    throw new Error(`ensureFolder HTTP ${res.status} ${body.slice(0, 200)}`);
   }
 
   /** ファイル本文をテキストで取得。存在しなければ null。 */
