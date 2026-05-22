@@ -22,8 +22,9 @@ import { seedTestData, SAMPLE_MAILS } from '../dev/seed';
 import { fetchOutlookMails, toIngestMails } from '../outlook/import';
 import { ingestToSegments } from '../db/writer';
 import { getEngine } from '../db/engine';
+import { fetchMonthlyTotals, currentUser } from '../usage/tracker';
 
-type SectionId = 'ai' | 'ingest' | 'display' | 'diag' | 'dev';
+type SectionId = 'ai' | 'ingest' | 'diag' | 'usage' | 'display' | 'dev';
 
 // メニュー構成は固定 (Spira と同じグループ流儀)。むやみに名前を変えないこと。
 const NAV_GROUPS: { title: string; items: { id: SectionId; label: string }[] }[] = [
@@ -34,6 +35,7 @@ const NAV_GROUPS: { title: string; items: { id: SectionId; label: string }[] }[]
     { id: 'ai',     label: 'AI 設定' },
     { id: 'ingest', label: '取り込み' },
     { id: 'diag',   label: '診断' },
+    { id: 'usage',  label: '利用料' },
   ] },
   { title: '運用', items: [
     { id: 'dev', label: '開発者モード' },
@@ -65,6 +67,7 @@ export function openSettingsHub(root: HTMLElement, siteUrl: string): void {
       case 'ingest':  buildIngestPane(pane, draft, root, siteUrl); break;
       case 'display': buildDisplayPane(pane, root); break;
       case 'diag':    buildDiagPane(pane, draft, root, siteUrl); break;
+      case 'usage':   buildUsagePane(pane, root); break;
       case 'dev':     buildDevPane(pane, draft, root, siteUrl); break;
     }
   }
@@ -401,6 +404,54 @@ function buildDiagPane(pane: HTMLElement, draft: RuntimeSettings, root: HTMLElem
   });
 
   pane.append(embed.row, runBtn);
+}
+
+// ─── 利用料 ─────────────────────────────────────────────────────────────────────
+
+function fmtYen(n: number): string {
+  return (Math.round(n * 100) / 100).toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function buildUsagePane(pane: HTMLElement, root: HTMLElement): void {
+  paneHead(pane, '利用料', 'AI (チャット・埋め込み) 利用料金の目安です。料金表から概算し、毎月 1 日にリセットされます。実請求は為替・実トークン数で変動します。');
+
+  pane.appendChild(el('p', { class: 'tdr-hint', style: 'margin-top:var(--s-5)' }, ['今月の利用料 (利用者全員の合計)']));
+  const totalEl = el('div', { style: 'font-size:var(--fs-xl);font-weight:700;color:var(--ink);margin-top:var(--s-2)' }, ['—']);
+  const subEl   = el('div', { class: 'tdr-hint', style: 'margin-top:var(--s-2)' }, ['']);
+  const breakdown = el('div', { style: 'margin-top:var(--s-6)' });
+  const refresh = el('button', { class: 'tdr-btn', style: 'margin-top:var(--s-6)' }, [el('span', { html: icons.activity(14) }), '更新']);
+
+  async function load(): Promise<void> {
+    totalEl.textContent = '集計中…';
+    subEl.textContent = '';
+    breakdown.replaceChildren();
+    try {
+      const t = await fetchMonthlyTotals();
+      totalEl.textContent = `¥${fmtYen(t.total)}`;
+      subEl.textContent = `${t.month} ・ あなたの利用分 ¥${fmtYen(t.ownYen)} (${t.ownTokens.toLocaleString()} トークン)`;
+      if (isDeveloperMode()) {
+        breakdown.appendChild(el('p', { class: 'tdr-pane-title' }, ['ユーザー別内訳 (開発者モード)']));
+        if (t.byUser.length === 0) {
+          breakdown.appendChild(el('p', { class: 'tdr-hint' }, ['記録がありません']));
+        } else {
+          const me = currentUser();
+          for (const u of t.byUser) {
+            breakdown.appendChild(el('div', { class: 'tdr-diag' }, [
+              el('span', {}, [u.user === me ? `${u.user} (あなた)` : u.user]),
+              el('span', { class: 'stat ok' }, [`¥${fmtYen(u.yen)} ・ ${u.tokens.toLocaleString()} tok`]),
+            ]));
+          }
+        }
+      }
+    } catch (e) {
+      totalEl.textContent = '取得失敗';
+      toast(root, `利用料の取得に失敗: ${e instanceof Error ? e.message : ''}`, 'error');
+    }
+  }
+  refresh.addEventListener('click', () => void load());
+
+  pane.append(totalEl, subEl, breakdown, refresh);
+  void load();
 }
 
 // ─── 開発者 ─────────────────────────────────────────────────────────────────────

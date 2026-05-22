@@ -194,6 +194,41 @@ window.fetch = async (url, opts) => {
     return new Response('', { status: 404 });
   }
 
+  // 利用料リスト (Tadori 利用料) — ステートフルなモック (集計表示の検証用)
+  const decoded = decodeURIComponent(u);
+  if (decoded.includes("getbytitle('Tadori 利用料')")) {
+    if (!window.__usageRows) {
+      const m = new Date().getFullYear() + '-' + String(new Date().getMonth()+1).padStart(2,'0');
+      window.__usageRows = [
+        { Id: 1, Title: m+'|tanaka@example.co.jp', Month: m, TadoriUser: 'tanaka@example.co.jp', Yen: 312.5, Tokens: 18200 },
+        { Id: 2, Title: m+'|sato@example.co.jp',   Month: m, TadoriUser: 'sato@example.co.jp',   Yen: 88.0,  Tokens: 5100 },
+      ];
+      window.__usageNextId = 3;
+    }
+    const method = (opts && opts.method || 'GET').toUpperCase();
+    const isItems = /\/items(\(|\?|$)/.test(decoded);
+    const idM = decoded.match(/\/items\((\d+)\)/);
+    if (idM && method === 'POST') { // MERGE 更新
+      const id = Number(idM[1]); const row = window.__usageRows.find(r => r.Id === id);
+      if (row) Object.assign(row, JSON.parse(opts.body || '{}'));
+      return new Response('', { status: 204 });
+    }
+    if (isItems && method === 'POST') { // 作成
+      const row = Object.assign({ Id: window.__usageNextId++ }, JSON.parse(opts.body || '{}'));
+      window.__usageRows.push(row);
+      return jsonResponse({ Id: row.Id });
+    }
+    if (isItems && method === 'GET') { // フィルタ取得
+      let rows = window.__usageRows;
+      const fT = decoded.match(/Title eq '([^']*)'/);
+      const fM = decoded.match(/Month eq '([^']*)'/);
+      if (fT) rows = rows.filter(r => r.Title === fT[1]);
+      else if (fM) rows = rows.filter(r => r.Month === fM[1]);
+      return jsonResponse({ value: rows });
+    }
+    return jsonResponse({ value: [], Id: 99 }); // 存在確認 / fields 等
+  }
+
   // SharePoint List 取得 → 常にモック
   if (u.includes('/_api/web/lists')) {
     try {

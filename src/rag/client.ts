@@ -3,6 +3,8 @@
 
 import type { RuntimeSettings } from '../api/aiSettings';
 import { streamClaude } from '../api/aiClaude';
+import { recordChat } from '../usage/tracker';
+import { estimateTokens } from '../usage/pricing';
 
 export interface RagSource {
   /** 1 始まりの出典番号 (回答中の [n] と対応)。 */
@@ -35,15 +37,20 @@ export async function generateAnswer(
   onDelta: (text: string) => void,
   signal?: AbortSignal,
 ): Promise<string> {
+  const userPrompt = buildUserPrompt(question, sources);
+  const inputTokens = estimateTokens(SYSTEM_PROMPT) + estimateTokens(userPrompt);
+
   if (s.provider === 'claude') {
-    return streamClaude({
+    const answer = await streamClaude({
       apiKey: s.claudeApiKey,
       model: s.claudeModel,
       system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: buildUserPrompt(question, sources) }],
+      messages: [{ role: 'user', content: userPrompt }],
       onText: onDelta,
       signal,
     });
+    recordChat(s.claudeModel, inputTokens, estimateTokens(answer));
+    return answer;
   }
 
   const url = `${s.chatBaseUrl.replace(/\/+$/, '')}`
@@ -63,7 +70,7 @@ export async function generateAnswer(
     body: JSON.stringify({
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: buildUserPrompt(question, sources) },
+        { role: 'user', content: userPrompt },
       ],
       stream: true,
     }),
@@ -89,7 +96,7 @@ export async function generateAnswer(
       const t = line.trim();
       if (!t.startsWith('data:')) continue;
       const data = t.slice(5).trim();
-      if (data === '[DONE]') return answer;
+      if (data === '[DONE]') { recordChat(s.chatModel, inputTokens, estimateTokens(answer)); return answer; }
       try {
         const json = JSON.parse(data) as { choices?: { delta?: { content?: string } }[] };
         const delta = json.choices?.[0]?.delta?.content;
@@ -97,5 +104,6 @@ export async function generateAnswer(
       } catch { /* keep-alive 等は無視 */ }
     }
   }
+  recordChat(s.chatModel, inputTokens, estimateTokens(answer));
   return answer;
 }

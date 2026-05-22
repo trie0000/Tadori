@@ -7,6 +7,7 @@ import { createChatPanel } from './chat';
 import { toast } from './toast';
 import { resolveProvider } from '../api/aiSettings';
 import { fetchLatestBuildId } from '../utils/bundleSource';
+import { initUsage } from '../usage/tracker';
 import cssText from '../styles/app.css';
 
 const LAST_BUILD_KEY = 'tadori:last-build';
@@ -27,6 +28,7 @@ export function boot(): void {
   }
 
   const siteUrl = window._spPageContextInfo?.webAbsoluteUrl ?? location.origin;
+  initUsage(siteUrl);
   const root    = el('div', { id: 'tadori-root' });
 
   // テーマ復元
