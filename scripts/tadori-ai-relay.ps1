@@ -183,8 +183,9 @@ Write-Host "  proxy   : $(if ($NoProxy -or -not $Proxy) { '(直接接続)' } els
 if ($SkipCertCheck) { Write-Host '  SSL 検証スキップ中 (-SkipCertCheck)' -ForegroundColor Yellow }
 Write-Host ('-' * 72)
 Write-Host 'エンドポイント:'
-Write-Host "  GET  $baseUrlShort/tadori/health   (死活確認)"
-Write-Host "  *    $baseUrlShort/...              (上記以外は target へ透過 forward)"
+Write-Host "  GET  $baseUrlShort/tadori/health           (死活確認)"
+Write-Host "  GET  $baseUrlShort/tadori/outlook/import   (Outlook からメール読込: ?to=&cc=&since=&until=&max=)"
+Write-Host "  *    $baseUrlShort/...                      (上記以外は target へ透過 forward)"
 Write-Host ''
 Write-Host 'Tadori runtime / PoC のベース URL に下記を入力:'
 Write-Host "  A: $baseUrlShort"
@@ -250,6 +251,133 @@ function Send-Json {
     finally { try { $Response.OutputStream.Close() } catch { } }
 }
 
+# ─── Outlook COM (メールインポート) ─────────────────────────────────────────
+# 既存の受信済み ML メールを Outlook クライアントから読み出し、To/Cc 条件と
+# 受信期間でフィルタして JSON で返す。Spira relay の Outlook COM 流用。
+# ※ 読み取り専用 (.Display/.Send は呼ばない)。Windows + Outlook 必須。
+
+function Get-OutlookOrNull {
+    try {
+        try { return [Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application') }
+        catch { return (New-Object -ComObject Outlook.Application) }
+    } catch { return $null }
+}
+
+# Recipient / Sender から SMTP アドレスを取り出す (Exchange の EX 形式を SMTP へ)。
+function Get-SmtpFromAddressEntry {
+    param($AddressEntry, [string]$Fallback)
+    try {
+        if ($AddressEntry) {
+            try { $ex = $AddressEntry.GetExchangeUser(); if ($ex -and $ex.PrimarySmtpAddress) { return $ex.PrimarySmtpAddress } } catch { }
+            try {
+                $smtp = $AddressEntry.PropertyAccessor.GetProperty('http://schemas.microsoft.com/mapi/proptag/0x39FE001F')
+                if ($smtp) { return $smtp }
+            } catch { }
+        }
+    } catch { }
+    return $Fallback
+}
+
+# MailItem を JSON 化可能なハッシュへ。
+function Read-MailItem {
+    param($Item)
+    $mid = ''
+    try { $mid = $Item.PropertyAccessor.GetProperty('http://schemas.microsoft.com/mapi/proptag/0x1035001F') } catch { }
+    $from = ''
+    try {
+        $from = [string]$Item.SenderEmailAddress
+        try { $from = Get-SmtpFromAddressEntry -AddressEntry $Item.Sender -Fallback $from } catch { }
+    } catch { }
+    $toList = @(); $ccList = @()
+    try {
+        foreach ($r in $Item.Recipients) {
+            $smtp = Get-SmtpFromAddressEntry -AddressEntry $r.AddressEntry -Fallback ([string]$r.Address)
+            if ($r.Type -eq 2) { $ccList += $smtp } else { $toList += $smtp }  # 1=To, 2=CC, 3=BCC
+        }
+    } catch { }
+    $date = ''
+    try { $date = $Item.ReceivedTime.ToString('o') } catch { }
+    $body = ''
+    try { $body = [string]$Item.Body } catch { }
+    return @{
+        messageId = [string]$mid
+        subject   = [string]$Item.Subject
+        from      = [string]$from
+        to        = @($toList)
+        cc        = @($ccList)
+        date      = [string]$date
+        body      = $body
+    }
+}
+
+function Invoke-OutlookImport {
+    param([System.Net.HttpListenerContext]$Context)
+    $request  = $Context.Request
+    $response = $Context.Response
+    $q = $request.QueryString
+
+    $split = { param($s) if ($s) { ($s -split '[;,]') | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ } } else { @() } }
+    $toAddrs = @(& $split $q['to'])
+    $ccAddrs = @(& $split $q['cc'])
+    $max = 1000
+    if ($q['max']) { $tmp = 0; if ([int]::TryParse($q['max'], [ref]$tmp)) { $max = $tmp } }
+    $sinceDt = (Get-Date).AddYears(-10)
+    $untilDt = (Get-Date).AddDays(1)
+    if ($q['since']) { try { $sinceDt = [DateTime]::Parse($q['since']) } catch { } }
+    if ($q['until']) { try { $untilDt = [DateTime]::Parse($q['until']) } catch { } }
+
+    $ol = Get-OutlookOrNull
+    if (-not $ol) {
+        Send-Error -Response $response -Status 503 -Code 'no_outlook' -Detail 'Outlook を起動/接続できませんでした (Windows + Outlook が必要)'
+        return
+    }
+
+    try {
+        $ns = $ol.GetNamespace('MAPI')
+        # ReceivedTime は Outlook ロケール依存。MM/dd/yyyy HH:mm が無難。
+        $filter = "[ReceivedTime] >= '" + $sinceDt.ToString('MM/dd/yyyy HH:mm') + "' AND [ReceivedTime] <= '" + $untilDt.ToString('MM/dd/yyyy HH:mm') + "'"
+
+        $matches = {
+            param($mail)
+            if ($toAddrs.Count -eq 0 -and $ccAddrs.Count -eq 0) { return $true }
+            $to = @(); $cc = @()
+            try {
+                foreach ($r in $mail.Recipients) {
+                    $s = (Get-SmtpFromAddressEntry -AddressEntry $r.AddressEntry -Fallback ([string]$r.Address)).ToLower()
+                    if ($r.Type -eq 2) { $cc += $s } else { $to += $s }
+                }
+            } catch { }
+            foreach ($a in $toAddrs) { if ($to -contains $a) { return $true } }
+            foreach ($a in $ccAddrs) { if ($cc -contains $a) { return $true } }
+            return $false
+        }
+
+        $results = New-Object System.Collections.ArrayList
+        # Inbox + 全サブフォルダを幅優先で走査 (ML はルールでサブフォルダ振り分けが多い)。
+        $queue = New-Object System.Collections.Queue
+        $queue.Enqueue($ns.GetDefaultFolder(6))  # olFolderInbox
+        while ($queue.Count -gt 0 -and $results.Count -lt $max) {
+            $folder = $queue.Dequeue()
+            try { foreach ($sf in $folder.Folders) { $queue.Enqueue($sf) } } catch { }
+            $items = $null
+            try { $items = $folder.Items.Restrict($filter) } catch { continue }
+            foreach ($it in $items) {
+                if ($results.Count -ge $max) { break }
+                try {
+                    if ($it.Class -ne 43) { continue }  # olMail
+                    if (& $matches $it) { [void]$results.Add((Read-MailItem -Item $it)) }
+                } catch { }
+            }
+        }
+
+        Write-Host ("[import] matched {0} mails (to=[{1}] cc=[{2}] {3}..{4})" -f $results.Count, ($toAddrs -join ','), ($ccAddrs -join ','), $sinceDt.ToString('yyyy-MM-dd'), $untilDt.ToString('yyyy-MM-dd'))
+        Send-Json -Response $response -Status 200 -Body @{ ok = $true; count = $results.Count; mails = @($results) }
+    }
+    catch {
+        Send-Error -Response $response -Status 500 -Code 'outlook_error' -Detail $_.Exception.Message
+    }
+}
+
 # ─── Request handler ────────────────────────────────────────────────────────
 
 function Invoke-RelayRequest {
@@ -273,6 +401,12 @@ function Invoke-RelayRequest {
     $path = $request.Url.AbsolutePath
     if ($path -eq '/tadori/health') {
         Send-Json -Response $response -Status 200 -Body @{ ok = $true; relay = 'tadori-ai-relay'; version = 1 }
+        return
+    }
+
+    # ── ローカル機能: Outlook からのメールインポート (読み取り専用) ──
+    if ($path -eq '/tadori/outlook/import') {
+        Invoke-OutlookImport -Context $Context
         return
     }
 

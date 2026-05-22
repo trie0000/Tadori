@@ -146,6 +146,20 @@ window.fetch = async (url, opts) => {
   // 実 API (Claude / Voyage) はそのまま通す
   if (u.includes('api.anthropic.com') || u.includes('api.voyageai.com')) return realFetch(url, opts);
 
+  // FormDigest (書き込みに必要) をモック
+  if (u.includes('/_api/contextinfo')) {
+    return jsonResponse({ FormDigestValue: 'harness-digest' });
+  }
+  // Outlook インポート (relay) をモック: サンプルメールを返す
+  if (u.includes('/tadori/outlook/import')) {
+    await new Promise(r => setTimeout(r, 150));
+    const mails = MAILS.slice(0, 4).map(m => ({
+      messageId: '<' + m.Id + '@example>', subject: m.Title, from: m.From,
+      to: ['ml@example.co.jp'], cc: [], date: m.Created, body: m.Body,
+    }));
+    return jsonResponse({ ok: true, count: mails.length, mails });
+  }
+
   // SharePoint List 取得 → 常にモック
   if (u.includes('/_api/web/lists')) {
     try {
@@ -158,8 +172,10 @@ window.fetch = async (url, opts) => {
   }
   // 中継サーバ経由 (社内AIモック時のみ到達)
   if (u.includes('/openai/') && u.includes('/embeddings')) {
-    const D = dims(); const r = rng(7), q = new Array(D); for (let j=0;j<D;j++) q[j]=r()*2-1;
-    return jsonResponse({ data:[{ index:0, embedding:q }] });
+    let n = 1; try { const b = JSON.parse(opts.body); if (Array.isArray(b.input)) n = b.input.length; } catch {}
+    const D = dims(); const data = [];
+    for (let k = 0; k < n; k++) { const r = rng(7 + k); const v = new Array(D); for (let j=0;j<D;j++) v[j]=r()*2-1; data.push({ index:k, embedding:v }); }
+    return jsonResponse({ data });
   }
   if (u.includes('/chat/completions')) {
     await new Promise(r => setTimeout(r, 150));

@@ -36,6 +36,8 @@ export const SAMPLE_MAILS: SampleMail[] = [
 
 export interface SeedResult {
   created: number;
+  /** 埋め込みまで付けられたか (false なら本文のみ投入 = まだ検索対象外)。 */
+  embedded: boolean;
   errors: string[];
 }
 
@@ -51,25 +53,37 @@ export async function seedTestData(
   // リストが無ければ自動作成 (列も追加)
   await sp.ensureList(s.listTitle, TADORI_LIST_FIELDS);
 
-  // まとめて埋め込み (provider に応じて Voyage / Azure)
-  const vecs = await embedDocsFor(SAMPLE_MAILS.map(m => m.body), s);
+  // 埋め込みは best-effort: プロバイダ未設定/失敗でも本文だけは投入する。
+  let vecs: Float32Array[] | null = null;
+  try {
+    vecs = await embedDocsFor(SAMPLE_MAILS.map(m => m.body), s);
+  } catch (e) {
+    console.warn('[tadori] seed: 埋め込みをスキップ (本文のみ投入):', (e as Error).message);
+    vecs = null;
+  }
 
   const errors: string[] = [];
   let created = 0;
-  const now = new Date();
+  const now = new Date().toISOString();
 
   for (let i = 0; i < total; i++) {
     const m = SAMPLE_MAILS[i];
-    const b64 = encodeEmbedding(normalize(vecs[i]));
+    const fields: Record<string, unknown> = {
+      Title: m.subject,
+      Body: m.body,
+      From: m.from,
+      [COLUMNS.isMl]: true,
+    };
+    if (vecs) {
+      fields[COLUMNS.embedding] = encodeEmbedding(normalize(vecs[i]));
+      fields[COLUMNS.embeddedAt] = now;
+      fields[COLUMNS.ragStatus] = 'indexed';
+    } else {
+      // 埋め込み未付与 = まだ検索対象外。後でプロバイダ設定後に再投入で埋め込まれる。
+      fields[COLUMNS.ragStatus] = 'pending';
+    }
     try {
-      await sp.createItem(s.listTitle, {
-        Title: m.subject,
-        Body: m.body,
-        From: m.from,
-        [COLUMNS.embedding]: b64,
-        [COLUMNS.embeddedAt]: now.toISOString(),
-        [COLUMNS.ragStatus]: 'indexed',
-      });
+      await sp.createItem(s.listTitle, fields);
       created++;
     } catch (e) {
       errors.push(`${m.subject}: ${e instanceof Error ? e.message : String(e)}`);
@@ -77,5 +91,5 @@ export async function seedTestData(
     onProgress?.(i + 1, total);
   }
 
-  return { created, errors };
+  return { created, embedded: vecs !== null, errors };
 }

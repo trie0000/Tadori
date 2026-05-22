@@ -15,6 +15,7 @@ import {
 import { isDeveloperMode, setDeveloperMode } from '../utils/devMode';
 import { embedQueryFor } from '../embeddings/router';
 import { seedTestData, SAMPLE_MAILS } from '../dev/seed';
+import { importFromOutlook } from '../outlook/import';
 
 type SectionId = 'ai' | 'ingest' | 'display' | 'diag' | 'dev' | 'about';
 
@@ -55,7 +56,7 @@ export function openSettingsHub(root: HTMLElement, siteUrl: string): void {
     pane.textContent = '';
     switch (id) {
       case 'ai':      buildAiPane(pane, draft); break;
-      case 'ingest':  buildIngestPane(pane, draft); break;
+      case 'ingest':  buildIngestPane(pane, draft, root, siteUrl); break;
       case 'display': buildDisplayPane(pane, root); break;
       case 'diag':    buildDiagPane(pane, draft, root); break;
       case 'dev':     buildDevPane(pane, draft, root, siteUrl); break;
@@ -185,7 +186,7 @@ function buildAiPane(pane: HTMLElement, draft: RuntimeSettings): void {
 
 // ─── 取り込み ─────────────────────────────────────────────────────────────────
 
-function buildIngestPane(pane: HTMLElement, draft: RuntimeSettings): void {
+function buildIngestPane(pane: HTMLElement, draft: RuntimeSettings, root: HTMLElement, siteUrl: string): void {
   paneHead(pane, '取り込み', '取り込み対象のメーリングリストと、ベクトルを格納する SharePoint List を設定します。');
 
   const grid = el('div', { class: 'tdr-fieldgrid' });
@@ -201,6 +202,79 @@ function buildIngestPane(pane: HTMLElement, draft: RuntimeSettings): void {
     ...mkRow('取り込み間隔 (秒)', mkInput(String(draft.ingestIntervalSec), v => { draft.ingestIntervalSec = Number(v) || 30; }), 'デフォルト 30 秒'),
   );
   pane.appendChild(grid);
+
+  // ── Outlook からの既存メールインポート ──
+  buildOutlookImport(pane, draft, root, siteUrl);
+}
+
+function buildOutlookImport(pane: HTMLElement, draft: RuntimeSettings, root: HTMLElement, siteUrl: string): void {
+  pane.appendChild(el('p', { class: 'tdr-pane-title', style: 'margin-top:var(--s-8)' }, ['Outlook からインポート']));
+  pane.appendChild(el('div', { class: 'tdr-pane-desc' }, [
+    'ローカル中継サーバ経由で Outlook の既存メールを読み込み、To/Cc 条件と受信期間で絞って List に取り込みます (中継サーバの起動が必要)。',
+  ]));
+
+  const today = new Date();
+  const yearAgo = new Date(today.getTime() - 365 * 86400000);
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+
+  const toArea = el('textarea', { class: 'tdr-input', rows: '2' });
+  toArea.value = draft.mlAddresses.join('\n');
+  const ccArea = el('textarea', { class: 'tdr-input', rows: '2' });
+  const sinceInp = el('input', { class: 'tdr-input', type: 'date', value: iso(yearAgo) });
+  const untilInp = el('input', { class: 'tdr-input', type: 'date', value: iso(today) });
+  const maxInp = el('input', { class: 'tdr-input', type: 'number', value: '1000' });
+
+  const grid = el('div', { class: 'tdr-fieldgrid' });
+  grid.append(
+    el('label', { class: 'top' }, ['To (宛先)']),
+    toArea,
+    el('p', { class: 'tdr-hint' }, ['この宛先のメールを取り込む。1 行に 1 件 (既定: ML アドレス)。']),
+    el('label', { class: 'top' }, ['Cc']),
+    ccArea,
+    el('p', { class: 'tdr-hint' }, ['Cc にこのアドレスが入るメールも対象。任意。']),
+    ...mkRow('期間 (開始)', sinceInp),
+    ...mkRow('期間 (終了)', untilInp),
+    ...mkRow('最大件数', maxInp),
+  );
+  pane.appendChild(grid);
+
+  const status = el('div', { style: 'font-size:var(--fs-sm);color:var(--ink-3);margin-top:var(--s-3)' }, ['']);
+  const btn = el('button', { class: 'tdr-btn tdr-btn--primary', style: 'margin-top:var(--s-4)' }, ['Outlook から取り込む']);
+
+  btn.addEventListener('click', () => {
+    const filter = {
+      to: parseAddressList(toArea.value),
+      cc: parseAddressList(ccArea.value),
+      since: sinceInp.value || undefined,
+      until: untilInp.value || undefined,
+      max: Number(maxInp.value) || 1000,
+    };
+    btn.disabled = true;
+    status.textContent = 'Outlook から取得中…';
+    void (async () => {
+      try {
+        const r = await importFromOutlook(draft, siteUrl, filter, (phase, done, total) => {
+          const label = phase === 'fetch' ? '取得中' : phase === 'embed' ? '埋め込み中' : '投入中';
+          status.textContent = total ? `${label}… ${done}/${total}` : `${label}…`;
+        });
+        if (r.fetched === 0) {
+          status.textContent = '該当するメールがありませんでした (条件・期間を確認)';
+          toast(root, '該当メール 0 件', 'warn');
+        } else {
+          const note = r.embedded ? '埋め込み済み・検索可能' : '本文のみ (プロバイダ未設定)';
+          status.textContent = `取得 ${r.fetched} 件 / 投入 ${r.created} 件 (${note})` + (r.errors.length ? ` / ${r.errors.length} 件失敗` : '');
+          toast(root, `Outlook から ${r.created} 件取り込みました`, r.errors.length ? 'error' : 'ok');
+          if (r.errors.length) console.warn('[tadori/import] errors:', r.errors);
+        }
+      } catch (e) {
+        status.textContent = '失敗';
+        toast(root, `インポート失敗: ${e instanceof Error ? e.message : String(e)}`, 'error');
+      }
+      btn.disabled = false;
+    })();
+  });
+
+  pane.append(btn, status);
 }
 
 // ─── 表示 ─────────────────────────────────────────────────────────────────────
@@ -297,14 +371,17 @@ function buildDevPane(
   seedBtn.addEventListener('click', () => {
     if (!confirm(`List「${draft.listTitle}」に ${SAMPLE_MAILS.length} 件のテストメールを作成します。よろしいですか?`)) return;
     seedBtn.disabled = true;
-    status.textContent = '埋め込み中…';
+    status.textContent = '投入中…';
     void (async () => {
       try {
         const r = await seedTestData(draft, siteUrl, (done, total) => {
           status.textContent = `投入中… ${done}/${total}`;
         });
-        status.textContent = `完了: ${r.created} 件作成` + (r.errors.length ? ` / ${r.errors.length} 件失敗` : '');
-        toast(root, `テストデータ ${r.created} 件を投入しました`, r.errors.length ? 'error' : 'ok');
+        const note = r.embedded
+          ? '埋め込み済み・検索可能'
+          : '本文のみ (埋め込みプロバイダ未設定 — 検索するにはプロバイダ設定後に再投入)';
+        status.textContent = `完了: ${r.created} 件作成 (${note})` + (r.errors.length ? ` / ${r.errors.length} 件失敗` : '');
+        toast(root, `テストデータ ${r.created} 件を投入しました (${r.embedded ? '埋め込み済み' : '本文のみ'})`, r.errors.length ? 'error' : 'ok');
         if (r.errors.length) console.warn('[tadori/seed] errors:', r.errors);
       } catch (e) {
         status.textContent = '失敗';
