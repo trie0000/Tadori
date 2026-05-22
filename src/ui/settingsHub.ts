@@ -66,7 +66,7 @@ export function openSettingsHub(root: HTMLElement, siteUrl: string): void {
   const saveBtn = el('button', { class: 'tdr-btn tdr-btn--primary' }, ['保存']);
   saveBtn.addEventListener('click', () => {
     saveSettings(draft);
-    toast(root, '設定を保存しました', 'info');
+    toast(root, '設定を保存しました', 'ok');
   });
 
   openModal({
@@ -275,7 +275,7 @@ function buildDevPane(
   if (isDeveloperMode()) checkbox.checked = true;
   checkbox.addEventListener('change', () => {
     setDeveloperMode(checkbox.checked);
-    toast(root, checkbox.checked ? '開発者モード ON' : '開発者モード OFF', 'info');
+    toast(root, checkbox.checked ? '開発者モード ON' : '開発者モード OFF', 'ok');
   });
   pane.appendChild(el('label', {
     style: 'display:inline-flex;align-items:center;gap:var(--s-3);cursor:pointer;padding:var(--s-3);background:var(--paper-2);border-radius:var(--r-2)',
@@ -304,7 +304,7 @@ function buildDevPane(
           status.textContent = `投入中… ${done}/${total}`;
         });
         status.textContent = `完了: ${r.created} 件作成` + (r.errors.length ? ` / ${r.errors.length} 件失敗` : '');
-        toast(root, `テストデータ ${r.created} 件を投入しました`, r.errors.length ? 'error' : 'info');
+        toast(root, `テストデータ ${r.created} 件を投入しました`, r.errors.length ? 'error' : 'ok');
         if (r.errors.length) console.warn('[tadori/seed] errors:', r.errors);
       } catch (e) {
         status.textContent = '失敗';

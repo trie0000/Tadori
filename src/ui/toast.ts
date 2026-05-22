@@ -1,54 +1,51 @@
-// トースト。右上 stack。
-// info/ok は 2 秒で自動消滅。error は手動で閉じるまで残り、本文は選択可能 +
-// 「コピー」ボタン付き (コンソールが使えない環境でエラー全文を取れるように)。
+// トースト。右上 stack。Spira (src/components/toast.ts) と同じ作り。
+// × で閉じるだけ。本文はデフォルトで選択可能 (マウスでドラッグ → コピー)。
+// ok/info は 2 秒、warn は 3 秒、error は手動で閉じるまで残る。
 import { el } from '../lib/dom';
 import { icons } from './icons';
+
+type Variant = 'default' | 'ok' | 'warn' | 'error';
 
 let stack: HTMLElement | null = null;
 
 function ensureStack(root: HTMLElement): HTMLElement {
   if (stack && root.contains(stack)) return stack;
-  stack = el('div', { class: 'tdr-toast-stack' });
+  stack = el('div', { class: 'tdr-toast-stack', role: 'status', 'aria-live': 'polite' });
   root.appendChild(stack);
   return stack;
 }
 
-export function toast(root: HTMLElement, message: string, kind: 'info' | 'error' = 'info'): void {
-  if (kind !== 'error') {
-    const node = el('div', { class: 'tdr-toast' }, [message]);
-    ensureStack(root).appendChild(node);
-    setTimeout(() => node.remove(), 2000);
-    return;
-  }
+export function toast(root: HTMLElement, msg: string, variant: Variant = 'default', durationMs?: number): void {
+  const cls = ['tdr-toast'];
+  if (variant !== 'default') cls.push(`tdr-toast--${variant}`);
 
-  // エラー: 選択可能な本文 + コピー / 閉じる。クリックで勝手に消さない。
-  const msg = el('div', { class: 'tdr-toast-msg' }, [message]);
-  const copyBtn = el('button', { class: 'tdr-toast-btn' }, ['コピー']);
-  const closeBtn = el('button', { class: 'tdr-toast-btn', 'aria-label': '閉じる', html: icons.close(14) });
-  const node = el('div', { class: 'tdr-toast tdr-toast--error' }, [
-    msg,
-    el('div', { class: 'tdr-toast-actions' }, [copyBtn, closeBtn]),
+  const closeBtn = el('button', {
+    class: 'tdr-iconbtn',
+    'aria-label': '閉じる',
+    style: 'width:22px;height:22px;flex-shrink:0;color:var(--ink-3)',
+    html: icons.close(14),
+  });
+
+  const node = el('div', {
+    class: cls.join(' '),
+    style: 'display:flex;align-items:flex-start;gap:var(--s-3)',
+  }, [
+    el('div', { style: 'flex:1;min-width:0;word-break:break-word' }, [msg]),
+    closeBtn,
   ]);
 
-  copyBtn.addEventListener('click', () => {
-    void (async () => {
-      try {
-        await navigator.clipboard.writeText(message);
-        copyBtn.textContent = 'コピーしました';
-        setTimeout(() => { copyBtn.textContent = 'コピー'; }, 1500);
-      } catch {
-        // clipboard 不可時は本文を選択状態にして手動 Cmd/Ctrl+C を促す
-        const sel = window.getSelection();
-        const range = document.createRange();
-        range.selectNodeContents(msg);
-        sel?.removeAllRanges();
-        sel?.addRange(range);
-        copyBtn.textContent = '選択しました (Cmd+C)';
-        setTimeout(() => { copyBtn.textContent = 'コピー'; }, 2500);
-      }
-    })();
-  });
-  closeBtn.addEventListener('click', () => node.remove());
+  function dismiss(): void {
+    if (!node.isConnected) return;
+    node.style.transition = 'opacity .15s, transform .15s';
+    node.style.opacity = '0';
+    node.style.transform = 'translateY(-4px)';
+    setTimeout(() => node.remove(), 160);
+  }
+
+  closeBtn.addEventListener('click', e => { e.stopPropagation(); dismiss(); });
 
   ensureStack(root).appendChild(node);
+
+  const ttl = durationMs ?? (variant === 'error' ? 0 : variant === 'warn' ? 3000 : 2000);
+  if (ttl > 0) setTimeout(dismiss, ttl);
 }
