@@ -126,3 +126,8 @@
 /* toast */
 #tadori-root .tdr-toast-stack{position:fixed;top:var(--s-7);right:var(--s-7);z-index:2147483800;display:flex;flex-direction:column;gap:var(--s-3);}
 #tadori-root .tdr-toast{background:var(--paper);border:1px solid var(--line-strong);border-radius:var(--r-2);box-shadow:var(--shadow-modal);padding:var(--s-4) var(--s-5);font-size:var(--fs-md);color:var(--ink);max-width:320px;}
+#tadori-root .tdr-toast--error{max-width:440px;border-color:var(--danger);border-left:3px solid var(--danger);}
+#tadori-root .tdr-toast-msg{user-select:text;-webkit-user-select:text;cursor:text;white-space:pre-wrap;word-break:break-word;font-family:var(--font-mono);font-size:var(--fs-sm);line-height:1.5;color:var(--ink);}
+#tadori-root .tdr-toast-actions{display:flex;gap:var(--s-2);justify-content:flex-end;margin-top:var(--s-3);}
+#tadori-root .tdr-toast-btn{font-family:inherit;font-size:var(--fs-xs);padding:3px 8px;border:1px solid var(--line-strong);background:var(--paper-2);color:var(--ink);border-radius:var(--r-1);cursor:pointer;display:inline-flex;align-items:center;gap:4px;}
+#tadori-root .tdr-toast-btn:hover{background:var(--paper-2-strong);}
