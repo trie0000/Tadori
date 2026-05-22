@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tadori モックアップ</title>
+<style>
+/* ===== 1. デザイントークン (Spira app.css 流用) ===== */
+#tadori-root {
+  --ink:#2a2a26; --ink-3:#7a766c; --ink-4:#a8a39a;
+  --paper:#fafaf7; --paper-2:#f3f1ea; --paper-2-strong:#ece8de; --paper-3:#e8e4d8;
+  --line:rgba(42,42,38,.12); --line-strong:rgba(42,42,38,.18);
+  --accent:#7a8a78; --accent-soft:rgba(122,138,120,.18); --accent-strong:#5e6f5c;
+  --danger:#b8534a; --danger-soft:rgba(184,83,74,.12); --warn:#c47f1c; --warn-soft:rgba(196,127,28,.14);
+  --ok:#2f6f5e; --ok-soft:rgba(47,111,94,.12); --hl:rgba(196,174,96,.45);
+  --font-sans:"Meiryo","メイリオ","Hiragino Sans","Yu Gothic UI",-apple-system,"Segoe UI",system-ui,sans-serif;
+  --font-mono:ui-monospace,"Cascadia Mono","Consolas",monospace;
+  --fs-xs:11px; --fs-sm:12px; --fs-md:13px; --fs-base:15px; --fs-lg:16px; --fs-xl:18px;
+  --lh-base:1.75; --lh-tight:1.35;
+  --s-1:4px; --s-2:6px; --s-3:8px; --s-4:10px; --s-5:12px; --s-6:14px; --s-7:18px; --s-8:22px; --s-9:28px; --s-10:40px;
+  --r-1:2px; --r-2:4px; --r-3:6px; --r-4:8px;
+  --shadow-panel:0 8px 20px rgba(42,42,38,.10);
+  --shadow-modal:0 0 0 1px rgba(42,42,38,.06),0 4px 12px rgba(42,42,38,.10),0 16px 40px rgba(42,42,38,.18);
+  --topbar-h:44px; --gutter:24px;
+  --z-overlay:2147483600; --z-modal:2147483700; --z-toast:2147483800;
+  font-family:var(--font-sans); font-size:var(--fs-base); line-height:var(--lh-base); color:var(--ink);
+}
+#tadori-root[data-theme="dark"]{
+  --ink:#e8e4d8; --ink-3:#a8a39a; --ink-4:#7a766c;
+  --paper:#1d1b18; --paper-2:#25231f; --paper-2-strong:#2c2a25; --paper-3:#3a3731;
+  --line:rgba(232,228,216,.14); --line-strong:rgba(232,228,216,.22);
+}
+/* host shield 相当 (mockup では body も合わせる) */
+body{margin:0;background:var(--paper-2,#f3f1ea);}
+#tadori-root *{box-sizing:border-box;}
+
+/* ===== 2. レイアウト ===== */
+#tadori-root{display:flex;flex-direction:column;height:100vh;background:var(--paper);}
+.tdr-topbar{display:flex;align-items:center;gap:var(--s-4);height:var(--topbar-h);
+  padding:0 var(--gutter);border-bottom:1px solid var(--line);background:var(--paper);flex:0 0 auto;}
+.tdr-brand{display:flex;align-items:center;gap:var(--s-3);font-size:var(--fs-lg);font-weight:600;}
+.tdr-brand .mark{font-family:var(--font-mono);color:var(--accent-strong);font-size:var(--fs-xl);}
+.tdr-brand .sub{font-size:var(--fs-xs);color:var(--ink-3);font-weight:400;}
+.tdr-spacer{flex:1;}
+.tdr-main{flex:1;min-height:0;overflow:auto;padding:var(--gutter);}
+
+/* 検索ボックス */
+.tdr-searchwrap{position:relative;max-width:760px;margin:0 auto;}
+.tdr-searchicon{position:absolute;left:14px;top:50%;transform:translateY(-50%);color:var(--ink-4);pointer-events:none;}
+.tdr-search{width:100%;height:48px;padding:0 16px 0 42px;font-size:var(--fs-lg);font-family:inherit;
+  color:var(--ink);background:var(--paper-2);border:1px solid var(--line);border-radius:var(--r-3);outline:none;}
+.tdr-search::placeholder{color:var(--ink-4);}
+.tdr-search:focus{background:var(--paper);border-color:var(--line-strong);}
+
+/* 件数行 */
+.tdr-meta{max-width:760px;margin:var(--s-5) auto var(--s-3);display:flex;align-items:center;gap:var(--s-4);
+  font-size:var(--fs-sm);color:var(--ink-3);}
+.tdr-meta .mono{font-family:var(--font-mono);}
+
+/* 結果リスト */
+.tdr-results{max-width:760px;margin:0 auto;}
+.tdr-hit{padding:var(--s-5) var(--s-5);border-bottom:1px solid var(--line);cursor:pointer;border-radius:var(--r-2);}
+.tdr-hit:hover{background:var(--paper-2);}
+.tdr-hit.is-open{background:var(--accent-soft);}
+.tdr-hit-head{display:flex;align-items:baseline;gap:var(--s-4);}
+.tdr-hit-subject{font-size:var(--fs-base);font-weight:600;color:var(--ink);flex:1;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tdr-hit-score{font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--accent-strong);
+  background:var(--accent-soft);padding:2px 6px;border-radius:var(--r-1);flex:0 0 auto;}
+.tdr-hit-from{font-size:var(--fs-sm);color:var(--ink-3);margin-top:var(--s-1);}
+.tdr-hit-snippet{font-size:var(--fs-md);color:var(--ink);margin-top:var(--s-2);line-height:1.6;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.tdr-hit.is-open .tdr-hit-snippet{-webkit-line-clamp:unset;}
+.tdr-hit mark{background:var(--hl);color:inherit;border-radius:2px;padding:0 1px;}
+.tdr-hit-detail{margin-top:var(--s-5);padding-top:var(--s-5);border-top:1px solid var(--line);
+  font-size:var(--fs-md);color:var(--ink);line-height:1.8;white-space:pre-wrap;}
+
+/* バッジ / pill */
+.tdr-pill{display:inline-flex;align-items:center;gap:var(--s-2);height:26px;padding:0 10px;
+  font-size:var(--fs-sm);border-radius:99px;border:1px solid var(--line-strong);background:var(--paper-2);color:var(--ink-3);}
+.tdr-pill .dot{width:7px;height:7px;border-radius:50%;background:var(--ok);}
+.tdr-pill.is-off .dot{background:var(--ink-4);}
+.tdr-pill .mono{font-family:var(--font-mono);color:var(--ink);}
+
+/* ボタン (規約: 標準34/ small28/ icon30) */
+.tdr-btn{height:34px;padding:0 var(--s-7);font-size:var(--fs-md);font-family:inherit;border-radius:var(--r-2);
+  border:1px solid var(--line-strong);background:var(--paper-2);color:var(--ink);cursor:pointer;display:inline-flex;align-items:center;gap:var(--s-2);}
+.tdr-btn:hover{background:var(--paper-2-strong);}
+.tdr-btn--primary{background:var(--accent);border-color:var(--accent);color:#fff;}
+.tdr-btn--primary:hover{background:var(--accent-strong);border-color:var(--accent-strong);}
+.tdr-btn--ghost{background:transparent;border-color:transparent;color:var(--ink-3);}
+.tdr-btn--ghost:hover{background:var(--paper-2);}
+.tdr-btn--sm{height:28px;padding:0 var(--s-5);font-size:var(--fs-sm);}
+.tdr-iconbtn{width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;
+  border:none;background:transparent;color:var(--ink-3);border-radius:var(--r-2);cursor:pointer;}
+.tdr-iconbtn:hover{background:var(--paper-2);color:var(--ink);}
+
+/* ===== モーダル (Spira 寸法そのまま) ===== */
+.tdr-backdrop{position:fixed;inset:0;z-index:2147483700;background:rgba(15,15,15,.45);
+  backdrop-filter:blur(2px);display:flex;align-items:center;justify-content:center;padding:var(--s-7);}
+.tdr-backdrop[hidden]{display:none;}
+.tdr-modal{background:var(--paper);border:1px solid var(--line-strong);border-radius:var(--r-3);
+  box-shadow:var(--shadow-modal);padding:var(--s-7);width:100%;max-width:560px;max-height:calc(100vh - var(--s-10));overflow:auto;}
+.tdr-modal-header{display:flex;align-items:center;gap:var(--s-3);margin-bottom:var(--s-5);}
+.tdr-modal-title{font-size:var(--fs-lg);font-weight:600;margin:0;}
+.tdr-modal-footer{display:flex;justify-content:flex-end;gap:var(--s-3);margin-top:var(--s-7);}
+/* 2列グリッド設定フォーム */
+.tdr-fieldgrid{display:grid;grid-template-columns:120px minmax(0,1fr);gap:var(--s-3) var(--s-4);align-items:center;}
+.tdr-fieldgrid > label{color:var(--ink-3);font-size:var(--fs-sm);justify-self:end;text-align:right;white-space:nowrap;}
+.tdr-fieldgrid > label.top{align-self:start;padding-top:8px;}
+.tdr-input{width:100%;height:32px;padding:0 10px;font-size:var(--fs-md);font-family:inherit;color:var(--ink);
+  background:var(--paper-2);border:1px solid var(--line);border-radius:var(--r-2);outline:none;}
+.tdr-input:focus{background:var(--paper);border-color:var(--line-strong);}
+textarea.tdr-input{height:auto;padding:8px 10px;resize:vertical;line-height:1.6;}
+.tdr-hint{grid-column:2;font-size:var(--fs-xs);color:var(--ink-3);line-height:1.6;margin:0;}
+
+/* diagnostics 行 */
+.tdr-diag{display:flex;align-items:center;gap:var(--s-3);padding:var(--s-3) 0;border-bottom:1px solid var(--line);font-size:var(--fs-md);}
+.tdr-diag .stat{font-family:var(--font-mono);font-size:var(--fs-sm);margin-left:auto;}
+.tdr-diag .ok{color:var(--ok);} .tdr-diag .ng{color:var(--danger);}
+
+svg{display:block;}
+</style>
+</head>
+<body>
+<div id="tadori-root" data-theme="light">
+
+  <!-- ===== Topbar ===== -->
+  <div class="tdr-topbar">
+    <div class="tdr-brand">
+      <span class="mark">辿</span>
+      <span>Tadori <span class="sub">ML メール検索</span></span>
+    </div>
+    <div class="tdr-spacer"></div>
+
+    <!-- 取り込み状況 pill -->
+    <span class="tdr-pill" id="ingestPill" title="取り込みループ">
+      <span class="dot"></span>稼働中 ·
+      <span class="mono">indexed 1,240</span> ·
+      <span class="mono">claimed 3</span>
+    </span>
+
+    <button class="tdr-iconbtn" title="ダークモード切替" onclick="toggleTheme()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+    <button class="tdr-iconbtn" title="接続診断" onclick="openModal('diag')">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+    </button>
+    <button class="tdr-iconbtn" title="設定" onclick="openModal('settings')">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
+  </div>
+
+  <!-- ===== Main: 検索パネル ===== -->
+  <div class="tdr-main">
+    <div class="tdr-searchwrap">
+      <span class="tdr-searchicon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      </span>
+      <input class="tdr-search" value="VPN 接続できない 在宅" placeholder="メール内容を意味で検索…">
+    </div>
+
+    <div class="tdr-meta">
+      <span><span class="mono">1,240</span> 件中 上位 <span class="mono">20</span> 件</span>
+      <span>·</span>
+      <span class="mono">38ms</span>
+    </div>
+
+    <div class="tdr-results" id="results"></div>
+  </div>
+
+  <!-- ===== 設定モーダル ===== -->
+  <div class="tdr-backdrop" id="modal-settings" hidden>
+    <div class="tdr-modal" role="dialog" aria-modal="true">
+      <div class="tdr-modal-header">
+        <h2 class="tdr-modal-title">設定</h2>
+        <button class="tdr-iconbtn" style="margin-left:auto" onclick="closeModal('settings')" aria-label="閉じる">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="tdr-fieldgrid">
+        <label>中継サーバ URL</label>
+        <input class="tdr-input" value="http://localhost:18080">
+        <p class="tdr-hint">tadori-ai-relay.ps1 の listen URL。</p>
+
+        <label>デプロイ名</label>
+        <input class="tdr-input" value="text-embedding-3-small">
+        <p class="tdr-hint">Azure のデプロイ名（モデル名と異なる場合あり）。</p>
+
+        <label>API キー</label>
+        <input class="tdr-input" type="password" value="************">
+        <p class="tdr-hint">localStorage に保存。中継経由で Azure にのみ送信。</p>
+
+        <label class="top">対象 ML アドレス</label>
+        <textarea class="tdr-input" rows="3">security-team@example.com
+infra-ml@example.com</textarea>
+        <p class="tdr-hint">1 行 1 アドレス。is_ml 判定対象のホワイトリスト。</p>
+
+        <label>次元数</label>
+        <select class="tdr-input"><option>256</option><option>384</option><option>512</option></select>
+
+        <label>同期間隔</label>
+        <select class="tdr-input"><option>30 秒</option><option>60 秒</option><option>120 秒</option></select>
+      </div>
+      <div class="tdr-modal-footer">
+        <button class="tdr-btn tdr-btn--ghost" onclick="closeModal('settings')">キャンセル</button>
+        <button class="tdr-btn tdr-btn--primary" onclick="closeModal('settings')">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 接続診断モーダル ===== -->
+  <div class="tdr-backdrop" id="modal-diag" hidden>
+    <div class="tdr-modal" role="dialog" aria-modal="true" style="max-width:480px">
+      <div class="tdr-modal-header">
+        <h2 class="tdr-modal-title">接続診断</h2>
+        <button class="tdr-iconbtn" style="margin-left:auto" onclick="closeModal('diag')" aria-label="閉じる">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div>
+        <div class="tdr-diag">中継サーバ (health)<span class="stat ok">200 OK</span></div>
+        <div class="tdr-diag">SharePoint List READ<span class="stat ok">200 · 1,240 件</span></div>
+        <div class="tdr-diag">埋め込み (Azure OpenAI)<span class="stat ok">256 次元</span></div>
+        <div class="tdr-diag">IndexedDB キャッシュ<span class="stat ok">1,240 / 同期済</span></div>
+      </div>
+      <div class="tdr-modal-footer">
+        <button class="tdr-btn" onclick="closeModal('diag')">再実行</button>
+        <button class="tdr-btn tdr-btn--primary" onclick="closeModal('diag')">閉じる</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const SAMPLE = [
+  {subject:"【ML】社外からのVPN接続が断続的に切れる件", from:"田中 (security-team@)", date:"2025-11-14 09:21", score:0.91,
+   snippet:"在宅勤務中に <mark>VPN</mark> が数分おきに切断される症状について。クライアント証明書の再発行で改善した事例を共有します。",
+   detail:"在宅勤務中に VPN が数分おきに切断される症状について。\n原因はクライアント証明書の期限切れに伴う再認証ループでした。\n対処: 証明書を再発行し、プロファイルを削除→再登録で解消。\n同様の問い合わせが今月3件目のため ML に共有します。"},
+  {subject:"Re: リモートデスクトップ経由だと遅い", from:"佐藤 (infra-ml@)", date:"2025-10-02 17:48", score:0.78,
+   snippet:"<mark>在宅</mark>環境からの RDP が遅い場合、まず <mark>VPN</mark> のスプリットトンネル設定を確認してください。",
+   detail:"在宅環境からの RDP が遅い場合のチェックリスト:\n1. VPN のスプリットトンネル設定\n2. 拠点側の帯域\n3. クライアントの省電力設定（NICのオフロード）"},
+  {subject:"【周知】VPNメンテナンス 11/20 深夜", from:"インフラ運用 (infra-ml@)", date:"2025-11-08 12:00", score:0.64,
+   snippet:"11/20 1:00-3:00 に <mark>VPN</mark> 装置のファーム更新を実施します。時間中は<mark>接続</mark>できません。",
+   detail:"11/20 1:00-3:00 に VPN 装置のファームウェア更新を実施します。\n作業中は社外からの接続が一時的に不可となります。\nご不便をおかけします。"},
+];
+
+function renderResults(){
+  const root = document.getElementById('results');
+  root.innerHTML = SAMPLE.map((h,i)=>`
+    <div class="tdr-hit${i===0?' is-open':''}" onclick="toggleHit(this)">
+      <div class="tdr-hit-head">
+        <div class="tdr-hit-subject">${h.subject}</div>
+        <span class="tdr-hit-score">${h.score.toFixed(2)}</span>
+      </div>
+      <div class="tdr-hit-from">${h.from} · ${h.date}</div>
+      <div class="tdr-hit-snippet">${h.snippet}</div>
+      ${i===0?`<div class="tdr-hit-detail">${h.detail}</div>`:''}
+    </div>`).join('');
+}
+function toggleHit(el){
+  const open = el.classList.contains('is-open');
+  document.querySelectorAll('.tdr-hit').forEach(x=>{x.classList.remove('is-open');const d=x.querySelector('.tdr-hit-detail');if(d)d.remove();});
+  if(!open){el.classList.add('is-open');const i=[...el.parentNode.children].indexOf(el);
+    const d=document.createElement('div');d.className='tdr-hit-detail';d.textContent=SAMPLE[i].detail;el.appendChild(d);}
+}
+function openModal(id){document.getElementById('modal-'+id).hidden=false;}
+function closeModal(id){document.getElementById('modal-'+id).hidden=true;}
+function toggleTheme(){const r=document.getElementById('tadori-root');r.dataset.theme=r.dataset.theme==='dark'?'light':'dark';}
+document.querySelectorAll('.tdr-backdrop').forEach(b=>b.addEventListener('click',e=>{if(e.target===b)b.hidden=true;}));
+renderResults();
+</script>
+</body>
+</html>
