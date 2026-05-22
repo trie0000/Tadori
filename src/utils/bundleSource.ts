@@ -40,6 +40,29 @@ export function setLocalBase(url: string): void {
   } catch (e) { console.warn('[tadori/bundleSource] localStorage 書込失敗:', (e as Error).message); }
 }
 
+/** ローダーと同じロジックで「本体の取得元 base」を解決する。解決不可なら空文字。 */
+export function resolveBundleBase(): string {
+  if (getBundleSource() === 'local') return getLocalBase();
+  try {
+    const ctx = window._spPageContextInfo as { webServerRelativeUrl?: string } | undefined;
+    const rel = ctx?.webServerRelativeUrl;
+    if (rel) return rel.replace(/\/$/, '') + '/Shared%20Documents/Tadori';
+  } catch { /* noop */ }
+  return '';
+}
+
+/** 取得元の version.txt を読んで最新ビルド ID を返す (取得失敗時 null)。更新チェック用。 */
+export async function fetchLatestBuildId(): Promise<string | null> {
+  const base = resolveBundleBase();
+  if (!base) return null;
+  try {
+    const res = await fetch(`${base}/version.txt?t=${Date.now()}`);
+    if (!res.ok) return null;
+    const txt = (await res.text()).trim();
+    return txt || null;
+  } catch { return null; }
+}
+
 /** ローカル relay の origin (例 http://127.0.0.1:18080) を local-base から導出。 */
 function localRelayOrigin(): string {
   try { return new URL(getLocalBase()).origin; } catch { return 'http://127.0.0.1:18080'; }

@@ -103,12 +103,16 @@
 
 /* 設定ハブ: 左ナビ + 右ペイン (Spira の設定ハブと同じ作り) */
 #tadori-root .tdr-hub{display:flex;flex:1;min-height:0;}
-#tadori-root .tdr-hub-nav{width:200px;flex:0 0 auto;border-right:1px solid var(--line);background:var(--paper-2);padding:var(--s-2) 0;overflow:auto;}
+#tadori-root .tdr-hub-nav{width:220px;flex:0 0 auto;border-right:1px solid var(--line);background:var(--paper-2);padding:var(--s-2) 0;overflow-y:auto;}
 #tadori-root .tdr-hub-group{padding:var(--s-3) var(--s-4) var(--s-1);font-size:var(--fs-xs);color:var(--ink-3);text-transform:uppercase;letter-spacing:.05em;font-weight:600;}
-#tadori-root .tdr-hub-navitem{display:block;padding:8px 16px;border-left:3px solid transparent;font-size:var(--fs-md);color:var(--ink-3);cursor:pointer;}
+#tadori-root .tdr-hub-navitem{display:block;padding:8px 16px;border-left:3px solid transparent;font-size:var(--fs-sm);color:var(--ink-3);cursor:pointer;}
 #tadori-root .tdr-hub-navitem:hover{background:var(--paper-2-strong);color:var(--ink);}
 #tadori-root .tdr-hub-navitem.is-active{background:var(--accent-soft);color:var(--ink);border-left-color:var(--accent);font-weight:600;}
-#tadori-root .tdr-hub-pane{flex:1;min-width:0;padding:var(--s-5) var(--s-7);overflow:auto;background:var(--paper);}
+#tadori-root .tdr-hub-pane{flex:1;min-width:0;padding:var(--s-5) var(--s-6);overflow:auto;background:var(--paper);}
+/* 設定フッタ: 左にビルド版+更新確認、右に保存 */
+#tadori-root .tdr-footer-left{margin-right:auto;display:flex;align-items:center;gap:var(--s-3);min-width:0;}
+#tadori-root .tdr-build-label{background:none;border:none;cursor:pointer;color:var(--ink-3);font-size:var(--fs-xs);font-family:var(--font-mono);text-align:left;padding:0;line-height:1.4;white-space:normal;word-break:break-all;max-width:340px;}
+#tadori-root .tdr-build-label:hover{color:var(--ink);}
 #tadori-root .tdr-pane-title{font-size:var(--fs-lg);font-weight:600;color:var(--ink);margin:0 0 var(--s-3);}
 #tadori-root .tdr-pane-desc{font-size:var(--fs-sm);line-height:1.7;color:var(--ink-3);background:var(--paper-2);border:1px solid var(--line);border-radius:var(--r-2);padding:var(--s-3) var(--s-4);margin:0 0 var(--s-5);}
 

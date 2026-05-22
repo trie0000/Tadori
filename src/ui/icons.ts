@@ -11,4 +11,5 @@ export const icons = {
   trash: (s?: number) => wrap('<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>', s),
   close: (s?: number) => wrap('<path d="M18 6 6 18M6 6l12 12"/>', s),
   chevron: (s?: number) => wrap('<path d="m6 9 6 6 6-6"/>', s),
+  door: (s?: number) => wrap('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>', s),
 };

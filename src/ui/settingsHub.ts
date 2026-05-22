@@ -15,14 +15,29 @@ import {
 import { isDeveloperMode, setDeveloperMode } from '../utils/devMode';
 import {
   getBundleSource, setBundleSource, getLocalBase, setLocalBase,
-  getRelayBundleDir, setRelayBundleDir, DEFAULT_LOCAL_BASE, type BundleSource,
+  getRelayBundleDir, setRelayBundleDir, DEFAULT_LOCAL_BASE, fetchLatestBuildId, type BundleSource,
 } from '../utils/bundleSource';
 import { embedQueryFor } from '../embeddings/router';
 import { seedTestData, SAMPLE_MAILS } from '../dev/seed';
 import { fetchOutlookMails, toIngestMails } from '../outlook/import';
 import { ingestToSegments } from '../db/writer';
 
-type SectionId = 'ai' | 'ingest' | 'display' | 'diag' | 'dev' | 'about';
+type SectionId = 'ai' | 'ingest' | 'display' | 'diag' | 'dev';
+
+// メニュー構成は固定 (Spira と同じグループ流儀)。むやみに名前を変えないこと。
+const NAV_GROUPS: { title: string; items: { id: SectionId; label: string }[] }[] = [
+  { title: '表示', items: [
+    { id: 'display', label: '表示' },
+  ] },
+  { title: 'AI / 自動化', items: [
+    { id: 'ai',     label: 'AI 設定' },
+    { id: 'ingest', label: '取り込み' },
+    { id: 'diag',   label: '診断' },
+  ] },
+  { title: '運用', items: [
+    { id: 'dev', label: '開発者モード' },
+  ] },
+];
 
 export function openSettingsHub(root: HTMLElement, siteUrl: string): void {
   const draft: RuntimeSettings = { ...loadSettings() };
@@ -30,23 +45,8 @@ export function openSettingsHub(root: HTMLElement, siteUrl: string): void {
   const nav  = el('div', { class: 'tdr-hub-nav' });
   const pane = el('div', { class: 'tdr-hub-pane' });
 
-  const navGroups: { title: string; items: { id: SectionId; label: string }[] }[] = [
-    { title: '一般', items: [
-      { id: 'ai',      label: 'AI 接続' },
-      { id: 'ingest',  label: '取り込み' },
-      { id: 'display', label: '表示' },
-    ] },
-    { title: '詳細', items: [
-      { id: 'diag', label: '診断' },
-      { id: 'dev',  label: '開発者' },
-    ] },
-    { title: '情報', items: [
-      { id: 'about', label: 'About' },
-    ] },
-  ];
-
   const navBtns = new Map<SectionId, HTMLElement>();
-  for (const g of navGroups) {
+  for (const g of NAV_GROUPS) {
     nav.appendChild(el('div', { class: 'tdr-hub-group' }, [g.title]));
     for (const item of g.items) {
       const btn = el('div', { class: 'tdr-hub-navitem' }, [item.label]);
@@ -65,7 +65,6 @@ export function openSettingsHub(root: HTMLElement, siteUrl: string): void {
       case 'display': buildDisplayPane(pane, root); break;
       case 'diag':    buildDiagPane(pane, draft, root); break;
       case 'dev':     buildDevPane(pane, draft, root, siteUrl); break;
-      case 'about':   buildAboutPane(pane); break;
     }
   }
 
@@ -80,10 +79,42 @@ export function openSettingsHub(root: HTMLElement, siteUrl: string): void {
     title: '設定',
     large: true,
     body:   el('div', { class: 'tdr-hub' }, [nav, pane]),
-    footer: el('div', { class: 'tdr-modal-footer' }, [saveBtn]),
+    footer: el('div', { class: 'tdr-modal-footer' }, [buildVersionUpdate(root), saveBtn]),
   });
 
   activate('ai');
+}
+
+// 歯車を開くと常に見えるビルドバージョン (クリックでコピー) + 更新確認ボタン。
+function buildVersionUpdate(root: HTMLElement): HTMLElement {
+  const ver = el('button', {
+    class: 'tdr-build-label',
+    title: 'クリックでコピー',
+  }, [`build: ${__TADORI_BUILD_ID__}`]);
+  ver.addEventListener('click', () => {
+    void navigator.clipboard?.writeText(__TADORI_BUILD_ID__).then(() => {
+      const t = ver.textContent;
+      ver.textContent = '✓ コピーしました';
+      setTimeout(() => { ver.textContent = t; }, 1200);
+    }).catch(() => { /* noop */ });
+  });
+
+  const updBtn = el('button', { class: 'tdr-btn' }, ['更新を確認']);
+  updBtn.addEventListener('click', () => {
+    updBtn.disabled = true;
+    const orig = updBtn.textContent;
+    updBtn.textContent = '確認中…';
+    void (async () => {
+      const latest = await fetchLatestBuildId();
+      updBtn.textContent = orig;
+      updBtn.disabled = false;
+      if (!latest) { toast(root, '更新元に接続できませんでした', 'warn'); return; }
+      if (latest === __TADORI_BUILD_ID__) { toast(root, '最新です', 'ok'); return; }
+      toast(root, `新しいバージョンがあります (${latest})。リロードで更新されます。`, 'ok');
+    })();
+  });
+
+  return el('div', { class: 'tdr-footer-left' }, [ver, updBtn]);
 }
 
 // ─── 共通ヘルパ ───────────────────────────────────────────────────────────────
@@ -483,16 +514,3 @@ function buildBundleSourcePane(pane: HTMLElement, root: HTMLElement): void {
   );
 }
 
-// ─── About ────────────────────────────────────────────────────────────────────
-
-function buildAboutPane(pane: HTMLElement): void {
-  paneHead(pane, 'About', 'バージョンとビルド情報。');
-  const grid = el('div', { class: 'tdr-fieldgrid' });
-  grid.append(
-    el('label', {}, ['バージョン']),
-    el('span', { style: 'font-family:var(--font-mono);font-size:var(--fs-sm)' }, [__TADORI_VERSION__]),
-    el('label', {}, ['ビルド']),
-    el('span', { style: 'font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink-3)' }, [__TADORI_BUILD_ID__]),
-  );
-  pane.appendChild(grid);
-}

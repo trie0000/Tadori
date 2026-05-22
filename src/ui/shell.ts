@@ -30,7 +30,7 @@ export function boot(): void {
   // トップバーボタン
   const moonBtn  = el('button', { class: 'tdr-iconbtn', 'aria-label': 'テーマ切替', html: icons.moon()     });
   const settBtn  = el('button', { class: 'tdr-iconbtn', 'aria-label': '設定',       html: icons.settings() });
-  const closeBtn = el('button', { class: 'tdr-iconbtn', 'aria-label': '閉じる',     html: icons.close()    });
+  const closeBtn = el('button', { class: 'tdr-iconbtn', 'aria-label': 'アプリを閉じる', title: 'アプリを閉じる', html: icons.door() });
 
   moonBtn.addEventListener('click', () => {
     const isDark = root.dataset.theme === 'dark';
