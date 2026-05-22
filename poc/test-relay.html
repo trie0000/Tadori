@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Tadori PoC — relay / 埋め込みテスト</title>
+<style>
+  body { font-family: 'Yu Gothic UI', 'Meiryo UI', sans-serif; max-width: 720px; margin: 24px auto; padding: 0 16px; color: #222; }
+  h1 { font-size: 18px; } h2 { font-size: 15px; margin-top: 28px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
+  label { display: block; margin: 8px 0 2px; font-size: 13px; color: #555; }
+  input { width: 100%; padding: 6px 8px; box-sizing: border-box; font-size: 13px; }
+  button { margin-top: 12px; padding: 8px 18px; font-size: 14px; cursor: pointer; }
+  pre { background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 6px; white-space: pre-wrap; word-break: break-all; font-size: 12px; min-height: 40px; }
+  .ok { color: #4ec94e; } .ng { color: #ff6b6b; } .muted { color: #888; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>🎯 Tadori PoC — 中継サーバ / 埋め込みテスト</h1>
+<p class="muted">tadori-ai-relay.bat を起動した状態でこのページを Edge で開き、各ボタンを押す。コンソール不要。</p>
+
+<h2>① 疎通確認（relay が生きているか）</h2>
+<label>relay のベース URL</label>
+<input id="relay" value="http://localhost:18080">
+<button onclick="health()">health を叩く</button>
+<pre id="out1">（未実行）</pre>
+
+<h2>② 埋め込みテスト（relay 経由で Azure OpenAI）</h2>
+<label>デプロイ名（Azure のデプロイ一覧の名前。モデル名と違う場合あり）</label>
+<input id="deployment" value="text-embedding-3-small">
+<label>api-version</label>
+<input id="apiver" value="2024-02-01">
+<label>認証: api-key（サブスクリプションキー方式の場合）</label>
+<input id="apikey" type="password" placeholder="api-key 方式ならここ">
+<label>認証: Authorization（AAD トークン方式の場合。例: Bearer eyJ...）</label>
+<input id="bearer" type="password" placeholder="トークン方式ならここ（api-key は空に）">
+<label>テスト文</label>
+<input id="text" value="これはTadoriの埋め込み検証用テスト文です">
+<button onclick="embed()">埋め込みを取得</button>
+<pre id="out2">（未実行）</pre>
+
+<script>
+function show(id, html) { document.getElementById(id).innerHTML = html; }
+function esc(s) { return String(s).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
+function relayBase() { return document.getElementById('relay').value.replace(/\/+$/, ''); }
+
+async function health() {
+  show('out1', '実行中...');
+  try {
+    const r = await fetch(relayBase() + '/tadori/health');
+    const j = await r.json();
+    show('out1', `<span class="ok">OK ✅ status ${r.status}</span>\n` + esc(JSON.stringify(j)));
+  } catch (e) {
+    show('out1', `<span class="ng">NG ❌ relay に接続できません</span>\n` + esc(e.message)
+      + `\n\n→ tadori-ai-relay.bat が起動しているか、ポートが ${relayBase()} か確認。`);
+  }
+}
+
+async function embed() {
+  show('out2', '実行中...（数秒かかることあり）');
+  const deployment = document.getElementById('deployment').value.trim();
+  const apiver = document.getElementById('apiver').value.trim();
+  const apikey = document.getElementById('apikey').value.trim();
+  const bearer = document.getElementById('bearer').value.trim();
+  const text = document.getElementById('text').value;
+
+  const url = `${relayBase()}/openai/deployments/${encodeURIComponent(deployment)}/embeddings?api-version=${encodeURIComponent(apiver)}`;
+  const headers = { 'Content-Type': 'application/json' };
+  if (apikey) headers['api-key'] = apikey;
+  if (bearer) headers['Authorization'] = bearer.startsWith('Bearer ') ? bearer : ('Bearer ' + bearer);
+
+  let r;
+  try {
+    r = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ input: [text], dimensions: 256 }),
+    });
+  } catch (e) {
+    show('out2', `<span class="ng">NG ❌ fetch 失敗</span>\n` + esc(e.message)
+      + `\n\n→ ① の health が通っているか先に確認。`);
+    return;
+  }
+
+  const raw = await r.text();
+  let j = null; try { j = JSON.parse(raw); } catch {}
+  const dim = j?.data?.[0]?.embedding?.length;
+
+  if (r.ok && dim) {
+    const bytes = Math.ceil((dim * 2) / 3) * 4;
+    show('out2', `<span class="ok">成功 ✅ status ${r.status}</span>\n`
+      + `次元: ${dim}${dim !== 256 ? ' ⚠️(256でない)' : ''}\n`
+      + `usage: ${esc(JSON.stringify(j.usage || {}))}\n`
+      + `1ベクトル概算 ${bytes}B → 37,500件で約 ${Math.round(bytes*37500/1e6)}MB\n`
+      + `先頭5次元: [${j.data[0].embedding.slice(0,5).map(x=>x.toFixed(4)).join(', ')} ...]`);
+  } else {
+    let hint = '';
+    if (r.status === 401 || r.status === 403) hint = '認証方式違い。api-key と Authorization のどちらか正しい方だけ入れる。';
+    else if (r.status === 404) hint = 'デプロイ名 か api-version が違う。Azure のデプロイ一覧で確認。';
+    else if (r.status === 502) hint = 'relay→Azure 未到達。.env の TARGET/PROXY、自己署名なら SKIP_CERT_CHECK=1。';
+    show('out2', `<span class="ng">NG ❌ status ${r.status}</span>\n`
+      + (hint ? `ヒント: ${hint}\n\n` : '') + `応答:\n` + esc(raw.slice(0, 800)));
+  }
+}
+</script>
+</body>
+</html>
