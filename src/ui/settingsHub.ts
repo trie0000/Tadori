@@ -304,10 +304,20 @@ function buildOutlookImport(pane: HTMLElement, draft: RuntimeSettings, root: HTM
 
   const RUN_LABEL = 'Outlook から取り込む';
   let ac: AbortController | null = null;
+  let inSearch = false; // Outlook 検索フェーズ中か (relay 側の検索は停止できない)
 
   btn.addEventListener('click', () => {
     // 実行中にもう一度押す = 停止
-    if (ac) { ac.abort(); btn.textContent = '停止中…'; return; }
+    if (ac) {
+      ac.abort();
+      if (inSearch) {
+        btn.textContent = 'キャンセル待ち';
+        status.textContent = '※ Outlook の検索処理は relay 側で完了するまで止められません。検索完了後、取り込みを行わずに終了します。';
+      } else {
+        btn.textContent = '停止中…';
+      }
+      return;
+    }
 
     const filter = {
       to: parseAddressList(toArea.value),
@@ -318,13 +328,15 @@ function buildOutlookImport(pane: HTMLElement, draft: RuntimeSettings, root: HTM
     };
     ac = new AbortController();
     const signal = ac.signal;
+    inSearch = true;
     btn.textContent = '停止';
-    status.textContent = 'Outlook を検索中…';
+    status.textContent = 'Outlook を検索中… (検索開始後は relay 側の処理が完了するまで停止できません)';
     hideBar();
     void (async () => {
       try {
         // ① まず対象件数を取得して提示
         const mails = await fetchOutlookMails(draft.relayBaseUrl, filter, signal);
+        inSearch = false; // 検索フェーズ完了
         if (mails.length === 0) {
           status.textContent = '該当するメールがありませんでした (条件・期間を確認)';
           toast(root, '該当メール 0 件', 'warn');
@@ -361,13 +373,16 @@ function buildOutlookImport(pane: HTMLElement, draft: RuntimeSettings, root: HTM
         }
       } catch (e) {
         if (signal.aborted || (e instanceof Error && e.name === 'AbortError')) {
-          status.textContent = '停止しました';
+          status.textContent = inSearch
+            ? 'Outlook の検索処理は relay 側で完了するまで継続します (結果は取り込まずに破棄)。'
+            : '停止しました';
         } else {
           status.textContent = '失敗';
           toast(root, `インポート失敗: ${e instanceof Error ? e.message : String(e)}`, 'error');
         }
       } finally {
         ac = null;
+        inSearch = false;
         btn.textContent = RUN_LABEL;
         hideBar();
       }
