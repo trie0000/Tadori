@@ -9,6 +9,8 @@
 
 import { decodeEmbedding } from '../lib/float16';
 import { normalize } from '../search/cosine';
+import { htmlToText } from '../lib/mailhtml';
+import { cleanBody } from '../lib/mailtext';
 import type { Segment, SegmentRecord } from '../sync/segments';
 
 /** 文字 2-gram の集合 (日本語は空白区切りが無いので char bigram で一致を取る)。 */
@@ -114,7 +116,12 @@ export class VectorDb {
   private kwCache = new Map<string, Set<string>>();
   private kwIndex(r: MailRecord): Set<string> {
     let s = this.kwCache.get(r.messageId);
-    if (!s) { s = bigrams(`${r.subject} ${r.body}`); this.kwCache.set(r.messageId, s); }
+    if (!s) {
+      // 引用履歴 / HTML タグはランキングに混ぜない (埋め込み側と同じ前処理)。
+      const text = r.isHtml ? htmlToText(r.body) : r.body;
+      s = bigrams(`${r.subject} ${cleanBody(text)}`);
+      this.kwCache.set(r.messageId, s);
+    }
     return s;
   }
 
