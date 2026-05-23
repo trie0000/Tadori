@@ -10,6 +10,7 @@ import { loadRules, matchesAnyRule } from '../search/exclusionRules';
 import { htmlToText, renderMailBody, splitHtmlReplyHistory } from '../lib/mailhtml';
 import { cleanBody, splitReplyHistory } from '../lib/mailtext';
 import { generateAnswer, rerankByLLM, type RagSource, type ChatHistoryMsg, type OneNoteAppendSuggestion } from '../rag/client';
+import { classifyQuery } from '../rag/queryRouter';
 import { loadSettings, saveSettings, CORP_AI_MODELS, CLAUDE_MODELS } from '../api/aiSettings';
 import { isDeveloperMode } from '../utils/devMode';
 import { renderMarkdown } from '../lib/markdown';
@@ -975,17 +976,20 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     await converse({
       displayQ: q,
       llmQuestion: q,
-      loadingLabel: 'メールを検索中',
+      loadingLabel: 'クエリを解析中',
       rerankable: true,
-      getHits: async () => {
+      getHits: async (signal) => {
         const s = loadSettings();
-        // 再ランカー有効時は多めに取って後で絞る。
+        // LLM クエリルータ: ID/固有名詞などは keywords 完全一致 + 意味文はベクトル検索、と分担。
+        // 失敗時は元クエリそのままで通常検索にフォールバック (queryRouter 内で FALLBACK 処理)。
+        const plan = await classifyQuery(q, s, signal);
         const topK = s.rerankEnabled ? Math.max(s.rerankCandidates, s.ragTopK) : s.ragTopK;
-        const raw = await searchVectors(q, s, siteUrl, topK);
-        // 除外ルール (件名/送信者/To/Cc/本文 の部分一致) で先に弾く。
+        const raw = await searchVectors(q, s, siteUrl, topK, {
+          vectorQuery: plan.vectorQuery,
+          mustContain: plan.keywords,
+        });
         const rules = loadRules();
         const afterExclude = rules.length ? raw.filter(h => !matchesAnyRule(h, rules)) : raw;
-        // スコアしきい値で足切り。全部下回ったら最良 1 件だけ残す (取りこぼし防止)。
         let filtered = afterExclude.filter(h => h.score >= s.ragMinScore);
         if (filtered.length === 0 && afterExclude.length > 0) filtered = [afterExclude[0]];
         return filtered as SavedHit[];
