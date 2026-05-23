@@ -249,6 +249,13 @@ window.fetch = async (url, opts) => {
     // mock: pretend p102 is currently active in OneNote
     return jsonResponse({ ok: true, pageId: 'p102' });
   }
+  if (u.includes('/tadori/onenote/links')) {
+    const params = new URL(u, location.origin).searchParams;
+    const ids = (params.get('ids') || '').split(';').filter(Boolean);
+    const links = {};
+    for (const id of ids) { links[id] = `onenote:///mocked/${id}#page-id={${id}}&end`; }
+    return jsonResponse({ ok: true, links });
+  }
   if (u.includes('/tadori/onenote/append')) {
     try {
       const body = opts && opts.body ? JSON.parse(opts.body) : {};

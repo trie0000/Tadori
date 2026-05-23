@@ -14,7 +14,7 @@ import { loadSettings, saveSettings, CORP_AI_MODELS, CLAUDE_MODELS } from '../ap
 import { isDeveloperMode } from '../utils/devMode';
 import { renderMarkdown } from '../lib/markdown';
 import { openMailInOutlook } from '../outlook/import';
-import { openOneNotePage, appendOneNotePage, markdownToBlocks, fetchCurrentOneNotePageId } from '../onenote/import';
+import { openOneNotePage, appendOneNotePage, markdownToBlocks, fetchCurrentOneNotePageId, fetchOneNoteLinks } from '../onenote/import';
 import { getEngine } from '../db/engine';
 import { getExcludedOneNotePageIds } from '../onenote/exclude';
 import { openModal } from './modal';
@@ -325,7 +325,7 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     // コピーボタン / OneNote 追記 / 利用料を 1 行で。
     const actions = el('div', { class: 'tdr-turn-actions' }, [
       makeCopyBtn(fullMarkdown),
-      makeAppendOneNoteBtn(query, fullMarkdown, relayBaseUrl),
+      makeAppendOneNoteBtn(query, fullMarkdown, relayBaseUrl, hits),
     ]);
     if (yen != null) {
       actions.appendChild(el('span', { class: 'tdr-turn-cost', title: 'このやり取りの AI 利用料 (目安)' }, [fmtYen(yen)]));
@@ -410,7 +410,7 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
    *  [内容を確認して追記] で大きなモーダルが開き、編集 → 確定する流れ。 */
   function renderAppendSuggestion(
     host: HTMLElement, sug: OneNoteAppendSuggestion, relayBaseUrl: string,
-    question: string, answer: string,
+    question: string, answer: string, hits: SavedHit[],
   ): void {
     const notice = el('div', { class: 'tdr-append-notice' });
     const lead = el('div', { class: 'tdr-append-notice-lead' }, [
@@ -421,19 +421,54 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     const openBtn  = el('button', { class: 'tdr-btn tdr-btn--primary' }, ['内容を確認して追記']);
     const skipBtn  = el('button', { class: 'tdr-btn' }, ['破棄']);
     openBtn.addEventListener('click', () => {
-      void openAppendOneNoteModal(question, answer, relayBaseUrl, sug);
+      void openAppendOneNoteModal(question, answer, relayBaseUrl, sug, hits);
     });
     skipBtn.addEventListener('click', () => { notice.remove(); });
     notice.append(lead, el('div', { class: 'tdr-append-notice-actions' }, [skipBtn, openBtn]));
     host.appendChild(notice);
   }
 
-  function makeAppendOneNoteBtn(question: string, answer: string, relayBaseUrl: string): HTMLElement {
+  /** 出典フッターを Markdown で組み立てる。
+   *  - 引用された [n] のヒットだけを採用 (回答中で実際に参照されたもの)。
+   *  - メール: "[n] **件名** — 送信者 (YYYY-MM-DD HH:mm)"
+   *  - OneNote: "[n] [ノートブック › セクション ・ タイトル](onenote:link)" (relay からリンクを引いた場合)
+   *  リンクが取れなかった OneNote ヒットや、relay 不在時はラベルのみ。 */
+  function buildSourcesFooter(answer: string, hits: SavedHit[], links: Map<string, string>): string {
+    const cited = new Set<number>();
+    for (const m of answer.matchAll(/\[(\d+)\]/g)) cited.add(Number(m[1]));
+    if (cited.size === 0 || hits.length === 0) return '';
+    const fmtDate = (iso: string): string => {
+      const d = new Date(iso); if (isNaN(d.getTime())) return iso || '';
+      const Y = d.getFullYear(), M = String(d.getMonth() + 1).padStart(2, '0'), D = String(d.getDate()).padStart(2, '0');
+      const hh = String(d.getHours()).padStart(2, '0'), mm = String(d.getMinutes()).padStart(2, '0');
+      return `${Y}-${M}-${D} ${hh}:${mm}`;
+    };
+    const lines: string[] = ['', '## 出典'];
+    hits.forEach((h, i) => {
+      const n = i + 1;
+      if (!cited.has(n)) return;
+      if (h.kind === 'onenote') {
+        // OneNote: subject はチャンク見出しを含むので「タイトル本体」だけ拾う ("title - heading" を割る)。
+        const pageTitle = (h.subject || '').split(' - ')[0];
+        const loc = h.from || '';
+        const label = loc ? `${loc} ・ ${pageTitle}` : pageTitle;
+        const link = links.get(h.conversationId || '') || '';
+        lines.push(link ? `- [${n}] [${label}](${link})` : `- [${n}] ${label}`);
+      } else {
+        // mail: 件名 + 送信者 + 送信日時。
+        const subj = (h.subject || '').replace(/\n/g, ' ');
+        lines.push(`- [${n}] **${subj}** — ${h.from} (${fmtDate(h.date)})`);
+      }
+    });
+    return lines.length > 2 ? lines.join('\n') : '';
+  }
+
+  function makeAppendOneNoteBtn(question: string, answer: string, relayBaseUrl: string, hits: SavedHit[]): HTMLElement {
     const btn = el('button', { class: 'tdr-copy', 'aria-label': 'OneNote に追記', title: 'AI の回答を OneNote に FAQ として追記' }, [
       el('span', { class: 'ic', html: icons.notebook(14) }),
       el('span', { class: 'lbl' }, ['OneNote に追記']),
     ]);
-    btn.addEventListener('click', () => { void openAppendOneNoteModal(question, answer, relayBaseUrl); });
+    btn.addEventListener('click', () => { void openAppendOneNoteModal(question, answer, relayBaseUrl, undefined, hits); });
     return btn;
   }
 
@@ -445,6 +480,7 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     answer: string,
     relayBaseUrl: string,
     prefill?: OneNoteAppendSuggestion,
+    hits: SavedHit[] = [],
   ): Promise<void> {
     const eng = await getEngine(siteUrl);
     const excluded = getExcludedOneNotePageIds();
@@ -454,18 +490,24 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
       return;
     }
 
-    // 引用番号 [n] と "@@SUGGEST@@" 以降は OneNote に貼っても邪魔なので除去。
-    const cleanAnswer = answer
-      .replace(/@@SUGGEST@@[\s\S]*$/, '')
-      .replace(/\s*\[\d+\]/g, '')
-      .trim();
+    // "@@SUGGEST@@" 以降は OneNote に貼っても邪魔なので除去。引用番号 [n] は出典フッターと
+    // 対応させるため残す。
+    const answerMain = answer.replace(/@@SUGGEST@@[\s\S]*$/, '').trim();
+
+    // 出典フッターを構築: OneNote ヒットには relay でリンクを引いて埋め込む。
+    const onenotePageIds = hits
+      .filter(h => h.kind === 'onenote' && h.conversationId)
+      .map(h => h.conversationId);
+    const oneLinks = onenotePageIds.length
+      ? await fetchOneNoteLinks(relayBaseUrl, [...new Set(onenotePageIds)]).catch(() => new Map<string, string>())
+      : new Map<string, string>();
+    const sourcesFooter = buildSourcesFooter(answer, hits, oneLinks);
 
     const defaultHeading = prefill?.heading?.trim() || `Q: ${question}`;
-    // AI 提案時も手動オープン時も「OneNote に貼る本文」は常にチャット回答テキスト
-    // (引用 [n] と @@SUGGEST@@ を除いたもの) を使う。LLM が prefill.body を返しても無視。
-    // こうしないと「チャットに出力した内容」と「OneNote へ追記される内容」が
-    // 別物になりやすい (LLM が二度書きで微妙にズレる)。
-    const defaultBody    = cleanAnswer;
+    // 本文 = チャット回答 (SUGGEST 除去) + 出典フッター。
+    // AI 提案時も手動オープン時も同じ。LLM が prefill.body を返しても無視 (チャット回答と
+    // OneNote へ追記される内容を必ず一致させる)。
+    const defaultBody    = sourcesFooter ? `${answerMain}\n${sourcesFooter}` : answerMain;
     const headingInput = el('input', { type: 'text', class: 'tdr-input', value: defaultHeading }) as HTMLInputElement;
     const bodyArea = el('textarea', { class: 'tdr-input', rows: '12', style: 'min-height:280px;font-family:var(--font-mono);font-size:var(--fs-sm)' }) as HTMLTextAreaElement;
     bodyArea.value = defaultBody;
@@ -630,7 +672,7 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
       if (!full.trim()) return;
       const ms = Math.round(performance.now() - t0);
       finalizeTurn(refs, full, hits, ms, s.relayBaseUrl, opts.displayQ, yen, createdAt);
-      if (appendSuggestion) renderAppendSuggestion(refs.aBody, appendSuggestion, s.relayBaseUrl, opts.displayQ, full);
+      if (appendSuggestion) renderAppendSuggestion(refs.aBody, appendSuggestion, s.relayBaseUrl, opts.displayQ, full, hits);
       if (suggestions.length) renderSuggest(refs.aBody, suggestions);
       const saved = appendTurn(currentId, { q: opts.displayQ, answer: full, hits, ms, yen, createdAt });
       if (saved.turns.length === 1 && aiTitle) setTitle(currentId, aiTitle);

@@ -165,14 +165,33 @@ export function markdownToBlocks(md: string): AppendBlock[] {
   return out;
 }
 
-// インライン markdown を OneNote が解釈する HTML タグへ。**太字** / *斜体* / `code` のみ対応。
+// インライン markdown を OneNote が解釈する HTML タグへ。**太字** / *斜体* / `code` / [label](url) に対応。
 function inlineMd(s: string): string {
   // XSS 対策で先に &<> をエスケープ → その後マークアップを差し戻す。
   let t = s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // [label](url) → <a href="url">label</a> (url 内の "&amp;" は HTML 属性値として正しい)
+  t = t.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
   t = t.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
   t = t.replace(/\*([^*]+)\*/g, '<i>$1</i>');
   t = t.replace(/`([^`]+)`/g, '<span style="font-family:Consolas,monospace;background:#f4f4f4">$1</span>');
   return t;
+}
+
+/** 指定したページ ID 群について OneNote の `onenote:` リンクを取得 (relay 経由)。
+ *  追記時の「出典」セクションに貼るためのもの。失敗したものは Map に含まれない。 */
+export async function fetchOneNoteLinks(
+  relayBaseUrl: string, pageIds: string[], signal?: AbortSignal,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!relayBaseUrl || pageIds.length === 0) return out;
+  try {
+    const p = new URLSearchParams(); p.set('ids', pageIds.join(';'));
+    const res = await fetch(`${trim(relayBaseUrl)}/tadori/onenote/links?${p.toString()}`, { method: 'GET', signal });
+    if (!res.ok) return out;
+    const j = await res.json() as { links?: Record<string, string> };
+    for (const [k, v] of Object.entries(j.links ?? {})) if (v) out.set(k, v);
+  } catch { /* relay 不在等は無視 (リンクなしで本文だけ書き込む) */ }
+  return out;
 }
 
 /** OneNote のアクティブウィンドウで現在表示中のページ ID を取得。
