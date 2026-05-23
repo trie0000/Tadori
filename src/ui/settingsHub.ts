@@ -475,7 +475,9 @@ function buildOutlookImport(pane: HTMLElement, draft: RuntimeSettings, root: HTM
             continue;
           }
 
-          // 埋め込み + 保存
+          // 埋め込み + 保存。
+          // 注: コールバック内では r を参照しない (r はまだ初期化中なので TDZ で死ぬ)。
+          // 「現チャンクで保存した件数」は upload フェーズの done で進行値が取れる。
           let embedded = 0, saved = 0;
           const r = await ingestToSegments(toIngestMails(mails), draft, siteUrl, (phase, done, total) => {
             if (phase === 'sync') { status.textContent = `${label}: 準備中…`; return; }
@@ -486,7 +488,7 @@ function buildOutlookImport(pane: HTMLElement, draft: RuntimeSettings, root: HTM
             // 全体進捗 = 完了済チャンク + 現チャンク内の比率
             const overall = Math.round(((i + pct / 100) / chunks.length) * 100);
             showBar(overall);
-            status.textContent = `${label}: 埋め込み ${embedded}/${total} ・ 保存 ${saved}/${total} 件 (累計 取得 ${totalFetched} / 新規 ${totalAdded + r.added})`;
+            status.textContent = `${label}: 埋め込み ${embedded}/${total} ・ 保存 ${saved}/${total} 件 (累計 取得 ${totalFetched} / 新規 ${totalAdded + saved})`;
           }, signal);
           totalAdded += r.added;
           totalSkipped += r.skipped;
