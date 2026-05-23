@@ -787,11 +787,15 @@ function Invoke-OneNoteAppend {
         Send-Error -Response $response -Status 400 -Code 'bad_json' -Detail ("JSON ボディを解釈できませんでした: " + $_.Exception.Message)
         return
     }
-    $pageId  = [string]$payload.pageId
-    $heading = [string]$payload.heading
-    $userId  = [string]$payload.user
-    $blocks  = @($payload.blocks)
-    if (-not $pageId) { Send-Error -Response $response -Status 400 -Code 'bad_request' -Detail 'pageId が必要です'; return }
+    $pageId          = [string]$payload.pageId
+    $createInSection = [string]$payload.createInSection
+    $newPageTitle    = [string]$payload.newPageTitle
+    $heading         = [string]$payload.heading
+    $userId          = [string]$payload.user
+    $blocks          = @($payload.blocks)
+    if (-not $pageId -and -not $createInSection) {
+        Send-Error -Response $response -Status 400 -Code 'bad_request' -Detail 'pageId または createInSection が必要です'; return
+    }
     if (-not $heading -and (-not $blocks -or $blocks.Count -eq 0)) {
         Send-Error -Response $response -Status 400 -Code 'bad_request' -Detail '見出しまたはブロックが必要です'; return
     }
@@ -803,6 +807,17 @@ function Invoke-OneNoteAppend {
     }
 
     try {
+        $createdNewPage = $false
+        # 新規ページ作成モード: 指定セクションに空ページを作って、その ID を pageId として後続処理に流す。
+        if ($createInSection) {
+            $newId = ''
+            $one.CreateNewPage($createInSection, [ref]$newId)
+            if (-not $newId) { throw 'CreateNewPage が空の pageId を返しました' }
+            $pageId = $newId
+            $createdNewPage = $true
+            Write-Host ("[onenote] created new page in section={0} pageId={1}" -f $createInSection, $pageId)
+        }
+
         # 既存ページを取得 → 既存 Outline の最下端 Y を求めて、その下に新規 Outline を置く。
         $content = ''
         $one.GetPageContent($pageId, [ref]$content)
@@ -810,6 +825,27 @@ function Invoke-OneNoteAppend {
         $oneNs = 'http://schemas.microsoft.com/office/onenote/2013/onenote'
         $ns = New-Object System.Xml.XmlNamespaceManager($doc.NameTable)
         $ns.AddNamespace('one', $oneNs)
+
+        # 新規ページ作成時はタイトルを差し替える (新規ページは未保存タイトルの空ページ)。
+        if ($createdNewPage -and $newPageTitle) {
+            $titleSafe = ($newPageTitle -replace '&', '&amp;') -replace '<', '&lt;' -replace '>', '&gt;'
+            $titleT = $doc.SelectSingleNode('//one:Page/one:Title/one:OE/one:T', $ns)
+            if ($titleT) {
+                $titleT.RemoveAll() | Out-Null
+                [void]$titleT.AppendChild($doc.CreateCDataSection($titleSafe))
+            } else {
+                # Title 構造が無ければ作る (CreateNewPage 直後は通常あるが念のため)
+                $page0 = $doc.DocumentElement
+                $titleEl = $doc.CreateElement('one', 'Title', $oneNs)
+                $oeT = $doc.CreateElement('one', 'OE', $oneNs)
+                $tEl = $doc.CreateElement('one', 'T', $oneNs)
+                [void]$tEl.AppendChild($doc.CreateCDataSection($titleSafe))
+                [void]$oeT.AppendChild($tEl)
+                [void]$titleEl.AppendChild($oeT)
+                # Title は通常 Page 直下の先頭近くに置く
+                [void]$page0.InsertBefore($titleEl, $page0.FirstChild)
+            }
+        }
 
         $maxY = 0.0
         foreach ($o in $doc.SelectNodes('//one:Outline', $ns)) {
@@ -930,8 +966,8 @@ function Invoke-OneNoteAppend {
 
         # 更新。dateExpectedLastModified を MinValue にして衝突チェックを省略 (末尾追加なので安全)。
         $one.UpdatePageContent($doc.OuterXml, [DateTime]::MinValue)
-        Write-Host ("[onenote] appended to page id={0} heading='{1}' blocks={2}" -f $pageId, $heading, $blocks.Count)
-        Send-Json -Response $response -Status 200 -Body @{ ok = $true }
+        Write-Host ("[onenote] appended to page id={0} heading='{1}' blocks={2} created={3}" -f $pageId, $heading, $blocks.Count, $createdNewPage)
+        Send-Json -Response $response -Status 200 -Body @{ ok = $true; pageId = $pageId; created = $createdNewPage }
     }
     catch {
         Send-Error -Response $response -Status 500 -Code 'onenote_error' -Detail $_.Exception.Message

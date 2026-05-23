@@ -122,15 +122,27 @@ export function pagesToIngestMails(pages: OneNotePage[]): IngestMail[] {
 export interface AppendBlock { type: 'h' | 'p' | 'ul' | 'ol' | 'q' | 'blank'; text: string; level?: number; }
 
 /** 既存 OneNote ページの末尾に新規 Outline として追記する (relay 経由)。
+ *  - pageId を指定すれば既存ページ末尾に追記。
+ *  - createInSection + newPageTitle を指定すれば、まずそのセクションに新規ページを作って
+ *    そこへ書き込む (CreateNewPage → タイトル設定 → 追記を 1 リクエストでまとめて実行)。
  *  user を渡すと relay 側で「Tadori 追記 by user [日時]」というバナー行が
- *  見出しの直前に挿入される (誰が追記したかをノート単独で識別できるように)。 */
+ *  見出しの直前に挿入される (誰が追記したかをノート単独で識別できるように)。
+ *  戻り値の pageId は実際に書き込みが入ったページ (新規作成時は新しい ID)。 */
+export interface AppendArgs {
+  pageId?: string;
+  createInSection?: string;
+  newPageTitle?: string;
+  heading?: string;
+  blocks: AppendBlock[];
+  user?: string;
+}
 export async function appendOneNotePage(
   relayBaseUrl: string,
-  args: { pageId: string; heading?: string; blocks: AppendBlock[]; user?: string },
+  args: AppendArgs,
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<{ pageId: string }> {
   if (!relayBaseUrl) throw new Error('中継サーバ URL が未設定です');
-  if (!args.pageId) throw new Error('pageId がありません');
+  if (!args.pageId && !args.createInSection) throw new Error('pageId または createInSection が必要です');
   const res = await fetch(`${trim(relayBaseUrl)}/tadori/onenote/append`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json; charset=utf-8' },
@@ -141,6 +153,8 @@ export async function appendOneNotePage(
     const b = await res.text().catch(() => '');
     throw new Error(`OneNote 追記失敗: HTTP ${res.status} ${b.slice(0, 300)}`);
   }
+  const j = await res.json().catch(() => ({})) as { pageId?: string };
+  return { pageId: String(j.pageId ?? args.pageId ?? '') };
 }
 
 /** Markdown 文字列を簡易ブロック列へ。# 見出し / - 箇条書き / 1. 番号 / > 引用 / それ以外は段落。

@@ -14,7 +14,7 @@ import { loadSettings, saveSettings, CORP_AI_MODELS, CLAUDE_MODELS } from '../ap
 import { isDeveloperMode } from '../utils/devMode';
 import { renderMarkdown } from '../lib/markdown';
 import { openMailInOutlook } from '../outlook/import';
-import { openOneNotePage, appendOneNotePage, markdownToBlocks, fetchCurrentOneNotePageId, fetchOneNoteLinks } from '../onenote/import';
+import { openOneNotePage, appendOneNotePage, markdownToBlocks, fetchCurrentOneNotePageId, fetchOneNoteLinks, fetchOneNoteHierarchy } from '../onenote/import';
 import { currentUser } from '../usage/tracker';
 import { getEngine } from '../db/engine';
 import { getExcludedOneNotePageIds } from '../onenote/exclude';
@@ -512,12 +512,48 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     const headingInput = el('input', { type: 'text', class: 'tdr-input', value: defaultHeading }) as HTMLInputElement;
     const bodyArea = el('textarea', { class: 'tdr-input', rows: '12', style: 'min-height:280px;font-family:var(--font-mono);font-size:var(--fs-sm)' }) as HTMLTextAreaElement;
     bodyArea.value = defaultBody;
+    const NEW_PAGE_SENTINEL = '__tdr_new_page__';
     const pageSelect = el('select', { class: 'tdr-input' }) as HTMLSelectElement;
     for (const p of pages) {
       const opt = el('option', { value: p.pageId }, [`${p.location} ・ ${p.title}`]) as HTMLOptionElement;
       pageSelect.appendChild(opt);
     }
+    // 新規ページ作成オプション (relay から階層が取れた時のみ実体として機能)。
+    const newPageOpt = el('option', { value: NEW_PAGE_SENTINEL }, ['+ 新規ページを作成…']) as HTMLOptionElement;
+    pageSelect.appendChild(newPageOpt);
     const currentHint = el('p', { class: 'tdr-hint', style: 'margin-top:var(--s-1)' }, ['取り込み済みかつ除外していない OneNote ページから選択します。']);
+
+    // 新規ページ作成用の入力欄 (デフォルト非表示)。
+    const sectionSelect = el('select', { class: 'tdr-input' }) as HTMLSelectElement;
+    const titleInput = el('input', { type: 'text', class: 'tdr-input', placeholder: '新規ページのタイトル' }) as HTMLInputElement;
+    const newPageBlock = el('div', { style: 'display:none;border-left:3px solid var(--accent-strong);padding:var(--s-3) var(--s-4);background:var(--accent-soft);border-radius:var(--r-2);margin-top:var(--s-2);display:none' }, [
+      el('div', { style: 'margin-bottom:var(--s-3)' }, [
+        el('label', { class: 'tdr-label' }, ['保存先セクション']),
+        sectionSelect,
+      ]),
+      el('div', {}, [
+        el('label', { class: 'tdr-label' }, ['新規ページタイトル']),
+        titleInput,
+      ]),
+    ]);
+    // 階層を lazy 取得してセクション一覧に展開。失敗時は「新規ページ」オプションを無効化。
+    let sectionsReady = false;
+    void (async () => {
+      try {
+        const notebooks = await fetchOneNoteHierarchy(relayBaseUrl);
+        for (const nb of notebooks) {
+          for (const sec of nb.sections) {
+            const opt = el('option', { value: sec.id }, [`${nb.name} › ${sec.name}`]) as HTMLOptionElement;
+            sectionSelect.appendChild(opt);
+          }
+        }
+        sectionsReady = sectionSelect.options.length > 0;
+        if (!sectionsReady) newPageOpt.disabled = true;
+      } catch {
+        newPageOpt.disabled = true;
+        newPageOpt.textContent = '+ 新規ページを作成… (relay 未接続のため使えません)';
+      }
+    })();
 
     if (prefill?.pageId && pages.some(p => p.pageId === prefill.pageId)) {
       // AI が選んだページがあればそれを既定にし、現在開いているページ取得は省略 (上書きされないように)。
@@ -538,6 +574,13 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
         }
       })();
     }
+
+    // pageSelect 切替で新規ページ入力欄の表示を切る。
+    const refreshNewPageBlock = (): void => {
+      newPageBlock.style.display = pageSelect.value === NEW_PAGE_SENTINEL ? '' : 'none';
+    };
+    pageSelect.addEventListener('change', refreshNewPageBlock);
+    refreshNewPageBlock();
 
     const opUser = currentUser();
     const escapeText = (t: string): string => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -561,6 +604,7 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
       el('div', {}, [
         el('label', { class: 'tdr-label' }, ['追記先ページ']), pageSelect,
         currentHint,
+        newPageBlock,
       ]),
       el('div', {}, [
         el('label', { class: 'tdr-label' }, ['見出し']), headingInput,
@@ -582,16 +626,28 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     const handle = openModal({ root, title: 'OneNote に追記', body, footer, large: true });
     cancelBtn.addEventListener('click', () => handle.close());
     confirmBtn.addEventListener('click', async () => {
-      const pageId = pageSelect.value;
+      const selected = pageSelect.value;
       const heading = headingInput.value.trim();
       const blocks = markdownToBlocks(bodyArea.value);
       if (!heading && blocks.length === 0) { toast(root, '見出しまたは本文を入力してください', 'warn'); return; }
+      const args: Parameters<typeof appendOneNotePage>[1] = { heading, blocks, user: opUser };
+      if (selected === NEW_PAGE_SENTINEL) {
+        const sectionId = sectionSelect.value;
+        const newTitle = titleInput.value.trim();
+        if (!sectionId) { toast(root, '保存先セクションを選択してください', 'warn'); return; }
+        if (!newTitle) { toast(root, '新規ページタイトルを入力してください', 'warn'); titleInput.focus(); return; }
+        args.createInSection = sectionId;
+        args.newPageTitle = newTitle;
+      } else {
+        args.pageId = selected;
+      }
       confirmBtn.disabled = true; cancelBtn.disabled = true;
       confirmBtn.textContent = '追記中…';
       try {
-        await appendOneNotePage(relayBaseUrl, { pageId, heading, blocks, user: opUser });
-        toast(root, 'OneNote に追記しました', 'ok');
+        const res = await appendOneNotePage(relayBaseUrl, args);
+        toast(root, args.createInSection ? `OneNote に新規ページを作成して追記しました` : 'OneNote に追記しました', 'ok');
         handle.close();
+        void res; // pageId は今のところ未使用 (将来「作ったページを開く」等に使える)
       } catch (e) {
         toast(root, `追記失敗: ${e instanceof Error ? e.message : String(e)}`, 'error');
         confirmBtn.disabled = false; cancelBtn.disabled = false;
