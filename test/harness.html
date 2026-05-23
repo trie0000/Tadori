@@ -222,6 +222,10 @@ window.fetch = async (url, opts) => {
     console.log('[harness] onenote/open id=', id);
     return jsonResponse({ ok: true });
   }
+  if (u.includes('/tadori/onenote/current')) {
+    // mock: pretend p102 is currently active in OneNote
+    return jsonResponse({ ok: true, pageId: 'p102' });
+  }
   if (u.includes('/tadori/onenote/append')) {
     try {
       const body = opts && opts.body ? JSON.parse(opts.body) : {};

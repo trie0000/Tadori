@@ -14,7 +14,7 @@ import { loadSettings, saveSettings, CORP_AI_MODELS, CLAUDE_MODELS } from '../ap
 import { isDeveloperMode } from '../utils/devMode';
 import { renderMarkdown } from '../lib/markdown';
 import { openMailInOutlook } from '../outlook/import';
-import { openOneNotePage, appendOneNotePage, markdownToBlocks } from '../onenote/import';
+import { openOneNotePage, appendOneNotePage, markdownToBlocks, fetchCurrentOneNotePageId } from '../onenote/import';
 import { getEngine } from '../db/engine';
 import { getExcludedOneNotePageIds } from '../onenote/exclude';
 import { openModal } from './modal';
@@ -422,6 +422,19 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
       const opt = el('option', { value: p.pageId }, [`${p.location} ・ ${p.title}`]) as HTMLOptionElement;
       pageSelect.appendChild(opt);
     }
+    const currentHint = el('p', { class: 'tdr-hint', style: 'margin-top:var(--s-1)' }, ['取り込み済みかつ除外していない OneNote ページから選択します。']);
+    // OneNote で「今開いているページ」を既定にする (取り込み済みなら)。
+    void (async () => {
+      const cur = await fetchCurrentOneNotePageId(relayBaseUrl).catch(() => '');
+      if (!cur) return;
+      const hit = pages.find(p => p.pageId === cur);
+      if (hit) {
+        pageSelect.value = cur;
+        currentHint.textContent = `現在開いているページを既定に選択しています: ${hit.location} ・ ${hit.title}`;
+      } else {
+        currentHint.textContent = '現在開いている OneNote ページはまだ取り込まれていないため、別のページを選んでください。';
+      }
+    })();
 
     const preview = el('div', { class: 'tdr-onenote-preview', style: 'border:1px solid var(--line);border-radius:var(--r-2);padding:var(--s-4);background:var(--paper-2);min-height:200px;max-height:300px;overflow:auto;font-size:var(--fs-sm);line-height:1.7' });
     const renderPreview = (): void => {
@@ -439,7 +452,7 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     const body = el('div', { class: 'tdr-modal-body', style: 'display:flex;flex-direction:column;gap:var(--s-4)' }, [
       el('div', {}, [
         el('label', { class: 'tdr-label' }, ['追記先ページ']), pageSelect,
-        el('p', { class: 'tdr-hint' }, ['取り込み済みかつ除外していない OneNote ページから選択します。']),
+        currentHint,
       ]),
       el('div', {}, [
         el('label', { class: 'tdr-label' }, ['見出し']), headingInput,

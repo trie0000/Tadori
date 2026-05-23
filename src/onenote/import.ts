@@ -175,6 +175,18 @@ function inlineMd(s: string): string {
   return t;
 }
 
+/** OneNote のアクティブウィンドウで現在表示中のページ ID を取得。
+ *  失敗時 (relay 未起動 / OneNote 未起動 / プロパティ取得不能) は空文字を返す。 */
+export async function fetchCurrentOneNotePageId(relayBaseUrl: string, signal?: AbortSignal): Promise<string> {
+  if (!relayBaseUrl) return '';
+  try {
+    const res = await fetch(`${trim(relayBaseUrl)}/tadori/onenote/current`, { method: 'GET', signal });
+    if (!res.ok) return '';
+    const j = await res.json() as { pageId?: string };
+    return j.pageId ?? '';
+  } catch { return ''; }
+}
+
 /** OneNote 上でページを表示。 */
 export async function openOneNotePage(relayBaseUrl: string, pageId: string, signal?: AbortSignal): Promise<void> {
   if (!relayBaseUrl) throw new Error('中継サーバ URL が未設定です');
