@@ -71,6 +71,40 @@ export function dewrapPlainText(text: string): string {
   return out.join('\n').replace(/\n{3,}/g, '\n\n');
 }
 
+/** HTML メール本文を「新規発言」と「引用履歴」に分割する。
+ *  blockquote / gmail_quote / Outlook の divRplyFwdMsg 等の最初の出現を引用開始とみなす。
+ *  検出できなければ tail は空 (= 全部 head)。サニタイズはしない (描画側で sanitizeMailHtml)。 */
+export function splitHtmlReplyHistory(html: string): { head: string; tail: string } {
+  if (!html) return { head: '', tail: '' };
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const body = doc.body;
+    const selectors = [
+      'blockquote',
+      '.gmail_quote',
+      '[id^="divRplyFwdMsg"]',
+      '[id="appendonsend"]',
+      '[id^="OLK_SRC_BODY_SECTION"]',
+      '[id="reply-intro"]',
+    ];
+    const firstMatch = body.querySelector(selectors.join(','));
+    if (!firstMatch) return { head: html, tail: '' };
+    // body の直下子まで遡る (引用ブロックが入れ子になっていてもグループごと尾に回す)。
+    let top: Node = firstMatch;
+    while (top.parentNode && top.parentNode !== body) top = top.parentNode;
+    if (top.parentNode !== body) return { head: html, tail: '' };
+    const headParts: string[] = [];
+    const tailParts: string[] = [];
+    let mode: 'head' | 'tail' = 'head';
+    for (const ch of Array.from(body.childNodes)) {
+      if (ch === top) mode = 'tail';
+      const s = ch.nodeType === 1 ? (ch as Element).outerHTML : (ch.textContent || '');
+      (mode === 'head' ? headParts : tailParts).push(s);
+    }
+    return { head: headParts.join(''), tail: tailParts.join('') };
+  } catch { return { head: html, tail: '' }; }
+}
+
 /** 本文を host 要素へ描画。isHtml なら HTML、そうでなければプレーン。 */
 export function renderMailBody(host: HTMLElement, body: string, isHtml: boolean): void {
   if (isHtml && body.trim()) {

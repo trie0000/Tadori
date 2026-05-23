@@ -7,8 +7,8 @@ import { icons } from './icons';
 import { toast } from './toast';
 import { searchVectors, getThread } from '../search/vectorSearch';
 import { loadRules, matchesAnyRule } from '../search/exclusionRules';
-import { htmlToText, renderMailBody } from '../lib/mailhtml';
-import { cleanBody } from '../lib/mailtext';
+import { htmlToText, renderMailBody, splitHtmlReplyHistory } from '../lib/mailhtml';
+import { cleanBody, splitReplyHistory } from '../lib/mailtext';
 import { generateAnswer, rerankByLLM, type RagSource, type ChatHistoryMsg } from '../rag/client';
 import { loadSettings, saveSettings, CORP_AI_MODELS, CLAUDE_MODELS } from '../api/aiSettings';
 import { isDeveloperMode } from '../utils/devMode';
@@ -602,13 +602,45 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
       if (!detail) {
         detail = el('div', { class: 'tdr-hit-detail' });
         detail.appendChild(renderMailHeader(h));
-        const bodyHost = el('div', { class: 'tdr-hit-detail-body' });
-        renderMailBody(bodyHost, h.body, h.isHtml); // HTML はサニタイズ描画、プレーンは pre-wrap
-        detail.appendChild(bodyHost);
+        detail.appendChild(renderMailBodyWithHistoryToggle(h));
         hitEl.appendChild(detail);
       } else { detail.hidden = !detail.hidden; }
     });
     return hitEl;
+  }
+
+  /** 本文を「新規発言」+ 折りたたみ式「過去のやり取り」で描画する。 */
+  function renderMailBodyWithHistoryToggle(h: SavedHit): HTMLElement {
+    const wrap = el('div', { class: 'tdr-hit-detail-body' });
+    const sp = h.isHtml ? splitHtmlReplyHistory(h.body) : splitReplyHistory(h.body);
+    const head = sp.head.trim();
+    const tail = sp.tail.trim();
+    // 履歴が無い or 新規発言が空 (=全部履歴) なら分割せずそのまま描画。
+    if (!tail || !head) { renderMailBody(wrap, h.body, h.isHtml); return wrap; }
+
+    const headHost = el('div', { class: 'tdr-hit-body-head' });
+    renderMailBody(headHost, head, h.isHtml);
+    wrap.appendChild(headHost);
+
+    const btn = el('button', { class: 'tdr-hit-more', type: 'button' }, [
+      el('span', { class: 'ic', html: icons.chevron(13) }),
+      el('span', { class: 'lbl' }, ['過去のやり取りを表示']),
+    ]);
+    const tailHost = el('div', { class: 'tdr-hit-body-tail' });
+    tailHost.hidden = true;
+    renderMailBody(tailHost, tail, h.isHtml);
+
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const opening = tailHost.hidden;
+      tailHost.hidden = !opening;
+      btn.classList.toggle('is-open', opening);
+      const lbl = btn.querySelector('.lbl');
+      if (lbl) lbl.textContent = opening ? '過去のやり取りを隠す' : '過去のやり取りを表示';
+    });
+
+    wrap.append(btn, tailHost);
+    return wrap;
   }
 
   /** 参考メール展開時のヘッダ (件名 / 送信日 / From / To / Cc)。 */

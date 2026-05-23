@@ -14,15 +14,19 @@ const REPLY_MARKERS: RegExp[] = [
   /^\s*\d{4}[-/]\d{1,2}[-/]\d{1,2}\b.*\bwrote\s*[:：]?\s*$/i,       // 2026-05-20 ... wrote:
 ];
 
-export function cleanBody(raw: string): string {
+/** 本文を「新規発言部分」と「引用履歴部分」に分割。表示時のトグル用にも使う。 */
+export function splitReplyHistory(raw: string): { head: string; tail: string } {
   const lines = (raw ?? '').replace(/\r\n?/g, '\n').split('\n');
-
-  // 返信履歴の開始行を探す (先頭行は本文とみなして対象外)。
   let cut = lines.length;
   for (let i = 1; i < lines.length; i++) {
     if (REPLY_MARKERS.some(re => re.test(lines[i]))) { cut = i; break; }
   }
+  return {
+    head: lines.slice(0, cut).join('\n').trim(),
+    tail: lines.slice(cut).join('\n').trim(),
+  };
+}
 
-  // cut 以降 (= 返信履歴) を捨て、それより前は引用行も含めてそのまま残す。
-  return lines.slice(0, cut).join('\n').trim().slice(0, 8000);
+export function cleanBody(raw: string): string {
+  return splitReplyHistory(raw).head.slice(0, 8000);
 }
