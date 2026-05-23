@@ -396,12 +396,16 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     const excluded = getExcludedOneNotePageIds();
     const pages = eng.db.importedOneNotePages().filter(p => !excluded.has(p.pageId));
     if (pages.length === 0) return '';
-    const recent = [...pages]
-      .sort((a, b) => (b.lastModified || '').localeCompare(a.lastModified || ''))
-      .slice(0, 30);
-    const lines = recent.map(p => `[${p.pageId}] ${p.location} ・ ${p.title}`).join('\n');
-    // 現在開いているページは並行取得 (失敗時は単にヒントを省く)
+    const sorted = [...pages].sort((a, b) => (b.lastModified || '').localeCompare(a.lastModified || ''));
+    // 現在開いているページは取り込み済み 30 件のうちに入っていなかったら個別に注入する
+    // (codex review 指摘: 30 件のリスト外だと AI の優先度 (2) =「現在開いているページ」が機能しなくなる)。
     const cur = await fetchCurrentOneNotePageId(relayBaseUrl, signal).catch(() => '');
+    const recent = sorted.slice(0, 30);
+    if (cur && !recent.some(p => p.pageId === cur)) {
+      const old = sorted.find(p => p.pageId === cur);
+      if (old) recent.unshift(old); // 直近 30 件の先頭に押し込む
+    }
+    const lines = recent.map(p => `[${p.pageId}] ${p.location} ・ ${p.title}`).join('\n');
     const hit = cur ? recent.find(p => p.pageId === cur) : null;
     const curHint = hit ? `\n\nOneNote で現在開いているページ: ${hit.pageId} (${hit.location} ・ ${hit.title})` : '';
     return `OneNote 追記候補ページ一覧 (取り込み済み):\n${lines}${curHint}`;
@@ -434,7 +438,10 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
    *  - メール: "[n] **件名** — 送信者 (YYYY-MM-DD HH:mm)"
    *  - OneNote: "[n] [ノートブック › セクション ・ タイトル](onenote:link)" (relay からリンクを引いた場合)
    *  リンクが取れなかった OneNote ヒットや、relay 不在時はラベルのみ。 */
-  function buildSourcesFooter(answer: string, hits: SavedHit[], links: Map<string, string>): string {
+  function buildSourcesFooter(
+    answer: string, hits: SavedHit[], links: Map<string, string>,
+    onenoteTitles: Map<string, string> = new Map(),
+  ): string {
     const cited = new Set<number>();
     for (const m of answer.matchAll(/\[(\d+)\]/g)) cited.add(Number(m[1]));
     if (cited.size === 0 || hits.length === 0) return '';
@@ -449,11 +456,28 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
       const n = i + 1;
       if (!cited.has(n)) return;
       if (h.kind === 'onenote') {
-        // OneNote: subject はチャンク見出しを含むので「タイトル本体」だけ拾う ("title - heading" を割る)。
-        const pageTitle = (h.subject || '').split(' - ')[0];
+        // OneNote: タイトルに " - " が含まれる場合に subject の分割で誤検出するので
+        // (codex review 指摘)、まず importedOneNotePages() の権威データを引く。
+        // 見つからない時のフォールバックは chunkIdx===0 (素のタイトル) を優先、
+        // それ以外は heading suffix を 1 回だけ剥がす。
+        const pageId = h.conversationId || '';
+        const titleFromDb = pageId ? onenoteTitles.get(pageId) : undefined;
+        let pageTitle: string;
+        if (titleFromDb) {
+          pageTitle = titleFromDb;
+        } else if ((h.chunkIdx ?? 0) === 0) {
+          pageTitle = h.subject || '';
+        } else {
+          // " - heading" 末尾だけを 1 回剥がす (title 内の他の "-" は壊さない)。
+          // pagesToIngestMails は subject = `${title} - ${heading}` の形で組むので、
+          // 最後の " - " 以降を heading とみなす近似で十分。
+          const subj = h.subject || '';
+          const lastSep = subj.lastIndexOf(' - ');
+          pageTitle = lastSep > 0 ? subj.slice(0, lastSep) : subj;
+        }
         const loc = h.from || '';
         const label = loc ? `${loc} ・ ${pageTitle}` : pageTitle;
-        const link = links.get(h.conversationId || '') || '';
+        const link = links.get(pageId) || '';
         lines.push(link ? `- [${n}] [${label}](${link})` : `- [${n}] ${label}`);
       } else {
         // mail: 件名 + 送信者 + 送信日時。
@@ -495,20 +519,16 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     // 対応させるため残す。
     const answerMain = answer.replace(/@@SUGGEST@@[\s\S]*$/, '').trim();
 
-    // 出典フッターを構築: OneNote ヒットには relay でリンクを引いて埋め込む。
-    const onenotePageIds = hits
-      .filter(h => h.kind === 'onenote' && h.conversationId)
-      .map(h => h.conversationId);
-    const oneLinks = onenotePageIds.length
-      ? await fetchOneNoteLinks(relayBaseUrl, [...new Set(onenotePageIds)]).catch(() => new Map<string, string>())
-      : new Map<string, string>();
-    const sourcesFooter = buildSourcesFooter(answer, hits, oneLinks);
+    // OneNote ページタイトル参照用 (footer のタイトル分割問題対策)。
+    const onenoteTitleMap = new Map<string, string>();
+    for (const p of eng.db.importedOneNotePages()) onenoteTitleMap.set(p.pageId, p.title);
 
+    // 出典フッター v1: リンク無しでまず作る (relay の応答を待たない)。
+    // 後でリンク取得が返ってきたら本文を差し替える (codex review 指摘: 不調な relay で
+    // モーダルが開かなくなる問題を回避)。
     const defaultHeading = prefill?.heading?.trim() || `Q: ${question}`;
-    // 本文 = チャット回答 (SUGGEST 除去) + 出典フッター。
-    // AI 提案時も手動オープン時も同じ。LLM が prefill.body を返しても無視 (チャット回答と
-    // OneNote へ追記される内容を必ず一致させる)。
-    const defaultBody    = sourcesFooter ? `${answerMain}\n${sourcesFooter}` : answerMain;
+    const initialFooter = buildSourcesFooter(answer, hits, new Map<string, string>(), onenoteTitleMap);
+    const defaultBody = initialFooter ? `${answerMain}\n${initialFooter}` : answerMain;
     const headingInput = el('input', { type: 'text', class: 'tdr-input', value: defaultHeading }) as HTMLInputElement;
     const bodyArea = el('textarea', { class: 'tdr-input', rows: '12', style: 'min-height:280px;font-family:var(--font-mono);font-size:var(--fs-sm)' }) as HTMLTextAreaElement;
     bodyArea.value = defaultBody;
@@ -569,6 +589,9 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
         if (hit) {
           pageSelect.value = cur;
           currentHint.textContent = `現在開いているページを既定に選択しています: ${hit.location} ・ ${hit.title}`;
+          // update モードが既に有効になっている場合、ここで pageSelect を書き換えても
+          // change ハンドラが走らないと Outline 一覧が古いままになるので明示的に発火 (codex review 指摘)。
+          pageSelect.dispatchEvent(new Event('change', { bubbles: true }));
         } else {
           currentHint.textContent = '現在開いている OneNote ページはまだ取り込まれていないため、別のページを選んでください。';
         }
@@ -622,17 +645,18 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
         outlineStatus.textContent = `取得失敗: ${e instanceof Error ? e.message : String(e)}`;
       }
     }
-    // outlineSelect の選択を見て、編集エリア (heading / body) と「現在内容」プレビューを更新する。
+    // outlineSelect の選択を見て、編集エリア (heading) と「現在内容」プレビューを更新する。
+    // plainText はタグ除去済みのテキストで、bullets/links/太字 等のマークダウン構造が失われている。
+    // そのまま bodyArea に入れて編集 → 上書きすると構造を失った状態で書き戻されてしまうため、
+    // bodyArea は空にして「現在内容を見ながら新しく書き直す」方式にする (codex review 指摘の round-trip 損失対策)。
     function applySelectedOutlineToEditor(): void {
       const idx = Number(outlineSelect.value);
       const sel = currentOutlines[idx];
       if (!sel) return;
       currentContentPane.textContent = sel.plainText;
       headingInput.value = sel.heading;
-      // plainText は banner + heading + body が全部混ざっているので、それらを除いた本文を推定。
-      const lines = sel.plainText.split('\n');
-      const bodyOnly = lines.filter(line => !/\[Tadori 追記\]/.test(line) && line.trim() !== sel.heading.trim()).join('\n');
-      bodyArea.value = bodyOnly.trim();
+      bodyArea.value = '';
+      bodyArea.placeholder = '現在内容 (左) を見ながら新しい本文を Markdown で書いてください。空のまま [更新で上書き] すると本文なしの Outline になります。';
       renderPreview();
     }
     outlineSelect.addEventListener('change', applySelectedOutlineToEditor);
@@ -732,6 +756,20 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
 
     const handle = openModal({ root, title: 'OneNote に追記', body, footer, large: true });
     cancelBtn.addEventListener('click', () => handle.close());
+
+    // モーダルを開いた後で OneNote ハイパーリンクを非同期取得 → 本文をリビルド。
+    // 取得が遅い/失敗してもモーダル自体は止めない。ユーザが本文を編集していなければ差し替える。
+    const onenotePageIds = hits.filter(h => h.kind === 'onenote' && h.conversationId).map(h => h.conversationId);
+    if (onenotePageIds.length > 0) {
+      void (async () => {
+        const oneLinks = await fetchOneNoteLinks(relayBaseUrl, [...new Set(onenotePageIds)]).catch(() => new Map<string, string>());
+        if (oneLinks.size === 0) return;
+        const newFooter = buildSourcesFooter(answer, hits, oneLinks, onenoteTitleMap);
+        const newBody = newFooter ? `${answerMain}\n${newFooter}` : answerMain;
+        // ユーザが既に編集してたら触らない。
+        if (bodyArea.value === defaultBody) { bodyArea.value = newBody; renderPreview(); }
+      })();
+    }
     confirmBtn.addEventListener('click', async () => {
       const heading = headingInput.value.trim();
       const blocks = markdownToBlocks(bodyArea.value);
@@ -847,6 +885,11 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     let appendSuggestion: OneNoteAppendSuggestion | null = null;
     let t0 = performance.now();
     const createdAt = new Date().toISOString();
+    // ストリーム中の rAF キャンセル用 (try/catch をまたぐので外で宣言)
+    let pendingRafId: number | null = null;
+    const cancelStreamRender = (): void => {
+      if (pendingRafId != null) { cancelAnimationFrame(pendingRafId); pendingRafId = null; }
+    };
 
     const save = (): void => {
       if (!full.trim()) return;
@@ -897,12 +940,12 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
       let firstDelta = true;
       // ストリーム中の markdown レンダリングは rAF で 1 フレーム 1 回までスロットル。
       // 毎トークン renderMarkdown を回すと重いし、フレーム境界に揃えるとちらつきも減る。
-      let renderQueued = false;
+      // 保留中の rAF は finalize 前にキャンセル (codex review 指摘: 最終 delta と [DONE] が
+      // 同フレームで来ると finalize 後に rAF が走り、wireCiteJump で付与したクリックハンドラが消える)。
       const scheduleStreamRender = (): void => {
-        if (renderQueued) return;
-        renderQueued = true;
-        requestAnimationFrame(() => {
-          renderQueued = false;
+        if (pendingRafId != null) return;
+        pendingRafId = requestAnimationFrame(() => {
+          pendingRafId = null;
           refs.answerText.innerHTML = renderMarkdown(full).replace(
             /\[(\d+)\]/g,
             (_, n) => `<span class="cite" data-n="${n}">[${n}]</span>`,
@@ -924,10 +967,12 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
         onAppendSuggestion: sug => { appendSuggestion = sug; },
       });
 
+      cancelStreamRender();
       save();
 
     } catch (err: unknown) {
       if (signal.aborted || (err instanceof Error && err.name === 'AbortError')) {
+        cancelStreamRender();
         save(); // 停止までに生成した分は確定・保存
         return;
       }

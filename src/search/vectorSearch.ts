@@ -61,21 +61,31 @@ export async function searchVectors(
   if (eng.db.size === 0) return [];
   const qvec = await embedQueryFor(question, s);
   const excluded = getExcludedOneNotePageIds();
-  // 多めに引いてから (a) 除外フィルタ (b) 同一 OneNote ページ内のチャンク重複排除 をかける。
-  // 重複排除は OneNote だけに適用 (メールは conversationId=スレッド ID で別メールが同 ID を持つので畳んではいけない)。
-  const pull = Math.max(topK * 3, topK + excluded.size + 20);
-  const raw = eng.db.search(qvec, pull, question, s.ragKeywordWeight)
-    .filter(({ record }) => !(record.kind === 'onenote' && excluded.has(record.conversationId)));
-  const seenPageIds = new Set<string>();
-  const deduped: typeof raw = [];
-  for (const h of raw) {
-    // 同じページから複数チャンクが上位に来た場合、最高スコアの 1 件だけ採用 (LLM へ重複文脈を渡さない)。
-    if (h.record.kind === 'onenote' && h.record.conversationId) {
-      if (seenPageIds.has(h.record.conversationId)) continue;
-      seenPageIds.add(h.record.conversationId);
+  // 1 OneNote ページが多数チャンクに分かれている場合、固定 over-pull だとデデュープ後に
+  // topK 未満で返るリスクがある (codex review 指摘)。
+  // dedup 後の件数が topK に達するまで pull を 2 倍ずつ拡張しつつ再検索する。
+  // db.search はメモリ内の全件ソートなので、pull が増えてもコストはほぼ一定 (slice の長さが変わるだけ)。
+  let pull = Math.max(topK * 3, topK + excluded.size + 20);
+  const dbSize = eng.db.size;
+  let deduped: ReturnType<typeof eng.db.search> = [];
+  // 多くても全件まで広げて打ち切り (無限ループを避ける)。
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const raw = eng.db.search(qvec, pull, question, s.ragKeywordWeight)
+      .filter(({ record }) => !(record.kind === 'onenote' && excluded.has(record.conversationId)));
+    const seenPageIds = new Set<string>();
+    deduped = [];
+    for (const h of raw) {
+      // 同じページから複数チャンクが上位に来た場合、最高スコアの 1 件だけ採用 (LLM へ重複文脈を渡さない)。
+      if (h.record.kind === 'onenote' && h.record.conversationId) {
+        if (seenPageIds.has(h.record.conversationId)) continue;
+        seenPageIds.add(h.record.conversationId);
+      }
+      deduped.push(h);
+      if (deduped.length >= topK) break;
     }
-    deduped.push(h);
     if (deduped.length >= topK) break;
+    if (pull >= dbSize) break; // 全件取り切ったらこれ以上増えない
+    pull = Math.min(pull * 2, dbSize);
   }
   return deduped.map(({ record, score }) => toHit(record, score));
 }

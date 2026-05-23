@@ -186,8 +186,10 @@ export function markdownToBlocks(md: string): AppendBlock[] {
     if (h) { flushPara(); out.push({ type: 'h', text: inlineMd(h[2]), level: 0 }); continue; }
     const ul = trimmed.match(/^[-*]\s+(.+)$/);
     if (ul) { flushPara(); out.push({ type: 'ul', text: inlineMd(ul[1]), level }); continue; }
-    const ol = trimmed.match(/^\d+\.\s+(.+)$/);
-    if (ol) { flushPara(); out.push({ type: 'ol', text: inlineMd(ol[1]), level }); continue; }
+    const ol = trimmed.match(/^(\d+)\.\s+(.+)$/);
+    // ol は元の番号を text 側に残す。OneNote の <one:List> を使わず素のテキストで書くため、
+    // ここで番号を捨てると OneNote 上で順序が消えてしまう (codex review 指摘)。
+    if (ol) { flushPara(); out.push({ type: 'ol', text: `${ol[1]}. ${inlineMd(ol[2])}`, level }); continue; }
     const q = trimmed.match(/^>\s*(.*)$/);
     if (q) { flushPara(); out.push({ type: 'q', text: inlineMd(q[1]), level: 0 }); continue; }
     if (para.length === 0) paraLevel = level;

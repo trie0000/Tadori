@@ -1002,9 +1002,22 @@ function Invoke-OneNoteTadoriOutlines {
             if ($firstText -notmatch '\[Tadori 追記\]') { continue }
 
             $outlineId = $outline.objectID
-            # 2 番目の OE = 見出し (省略可)
-            $secondT = $outline.SelectSingleNode('one:OEChildren/one:OE[2]//one:T', $ns)
-            $heading = if ($secondT) { [string]$secondT.InnerText } else { '' }
+            # 見出しは append 時に「<b>...</b>」だけの OE として書かれる (省略可)。
+            # OE[2] を無条件に見出し扱いすると、heading 省略の append (本文だけ) を後で
+            # update したときに本文の 1 行目を heading として吸い上げてしまい、構造が崩れる。
+            # OE[2] の InnerText が "<b>...</b>" だけで構成されているかチェックして見出し抽出する。
+            $heading = ''
+            $secondOE = $outline.SelectSingleNode('one:OEChildren/one:OE[2]', $ns)
+            if ($secondOE) {
+                $secondT = $secondOE.SelectSingleNode('.//one:T', $ns)
+                if ($secondT) {
+                    # CDATA を含めた完全な innerXml / outerXml を見て、<b>...</b> 単独ならそれが heading。
+                    # T.InnerText は CDATA 内の文字列をそのまま返すので "<b>春の懇親会</b>" 等になる。
+                    $rawT = [string]$secondT.InnerText
+                    $m = [regex]::Match($rawT.Trim(), '^<b>([\s\S]+)</b>$')
+                    if ($m.Success) { $heading = $m.Groups[1].Value }
+                }
+            }
             # 全テキストを連結 (改行区切り、HTML タグは除去) — プレビュー表示用
             $allTexts = New-Object System.Collections.ArrayList
             foreach ($t in $outline.SelectNodes('.//one:T', $ns)) {
