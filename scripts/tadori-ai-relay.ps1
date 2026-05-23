@@ -736,12 +736,13 @@ function Invoke-OneNoteCurrent {
         Send-Json -Response $response -Status 200 -Body @{ ok = $true; pageId = ''; reason = 'no_onenote' }
         return
     }
-    $pid = ''
+    # 注: $PID は PowerShell の読み取り専用自動変数 (プロセス ID) なので使わない。
+    $curPageId = ''
     try {
         $win = $one.Windows.CurrentWindow
-        if ($win) { $pid = [string]$win.CurrentPageId }
-    } catch { $pid = '' }
-    Send-Json -Response $response -Status 200 -Body @{ ok = $true; pageId = $pid }
+        if ($win) { $curPageId = [string]$win.CurrentPageId }
+    } catch { $curPageId = '' }
+    Send-Json -Response $response -Status 200 -Body @{ ok = $true; pageId = $curPageId }
 }
 
 # 指定 pageId のページ末尾に新しい Outline を追記。
