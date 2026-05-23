@@ -5,7 +5,7 @@ import { icons } from './icons';
 import { openSettingsHub } from './settingsHub';
 import { createChatPanel } from './chat';
 import { toast } from './toast';
-import { resolveProvider } from '../api/aiSettings';
+import { resolveProvider, loadSettings } from '../api/aiSettings';
 import { fetchLatestBuildId } from '../utils/bundleSource';
 import { initUsage } from '../usage/tracker';
 import cssText from '../styles/app.css';
@@ -73,6 +73,24 @@ export function boot(): void {
     }
     localStorage.setItem(LAST_BUILD_KEY, __TADORI_BUILD_ID__);
   } catch { /* noop */ }
+
+  // 起動時に中継サーバの死活確認。落ちていれば起動を促す。
+  void checkRelayAlive(root);
+}
+
+async function checkRelayAlive(root: HTMLElement): Promise<void> {
+  const s = loadSettings();
+  if (!s.relayBaseUrl) return; // claude only 等、relay 不要の構成は対象外
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 2500);
+  try {
+    const res = await fetch(`${s.relayBaseUrl.replace(/\/+$/, '')}/tadori/health`, { method: 'GET', signal: ctrl.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch {
+    toast(root, '中継サーバが起動していません。デスクトップの tadori-start から起動するか、tadori-ai-relay.ps1 を実行してください。', 'warn');
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ログインユーザー表示 (Spira 同様)。アバター(イニシャル) + 名前のチップ。
