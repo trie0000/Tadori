@@ -352,10 +352,33 @@ function buildIngestPane(pane: HTMLElement, draft: RuntimeSettings, root: HTMLEl
   buildOneNoteImport(pane, draft, root, siteUrl);
 }
 
+/** "YYYY-MM-DD" の since〜until 期間を月単位の半開区間に分割。
+ *  各チャンクの since はその月初、until はその月末 (relay 仕様で until は「その日いっぱい含む」)。
+ *  全期間が 1 ヶ月以内なら [since,until] のまま 1 チャンク。 */
+function splitPeriodMonthly(sinceStr: string, untilStr: string): Array<{ since: string; until: string }> {
+  const sinceD = new Date(sinceStr + 'T00:00:00');
+  const untilD = new Date(untilStr + 'T00:00:00');
+  if (isNaN(sinceD.getTime()) || isNaN(untilD.getTime()) || sinceD >= untilD) {
+    return [{ since: sinceStr, until: untilStr }];
+  }
+  const iso = (d: Date): string => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const out: Array<{ since: string; until: string }> = [];
+  let cur = new Date(sinceD);
+  while (cur <= untilD) {
+    // 当月の最終日 = 翌月 1 日の前日
+    const monthEnd = new Date(cur.getFullYear(), cur.getMonth() + 1, 0);
+    const chunkUntil = monthEnd < untilD ? monthEnd : untilD;
+    out.push({ since: iso(cur), until: iso(chunkUntil) });
+    cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
+  }
+  return out;
+}
+
 function buildOutlookImport(pane: HTMLElement, draft: RuntimeSettings, root: HTMLElement, siteUrl: string): void {
   pane.appendChild(el('p', { class: 'tdr-pane-title', style: 'margin-top:var(--s-8)' }, ['Outlook からインポート']));
   pane.appendChild(el('p', { class: 'tdr-hint', style: 'margin:0 0 var(--s-4)' }, [
     'ローカル中継サーバ経由で Outlook の既存メールを読み込み、To/Cc 条件と受信期間で絞って取り込みます (中継サーバの起動が必要)。',
+    '期間が 1 ヶ月を超える場合は自動で月単位に分割して順次取り込みます (relay の HTTP レスポンス肥大化と途中失敗のリスクを避けるため)。',
   ]));
 
   const today = new Date();
@@ -379,7 +402,9 @@ function buildOutlookImport(pane: HTMLElement, draft: RuntimeSettings, root: HTM
     el('p', { class: 'tdr-hint' }, ['Cc にこのアドレスが入るメールも対象。任意。']),
     ...mkRow('期間 (開始)', sinceInp),
     ...mkRow('期間 (終了)', untilInp),
-    ...mkRow('最大件数', maxInp),
+    ...mkRow('1 期間あたりの最大件数', maxInp),
+    el('div', {}, []), // placeholder
+    el('p', { class: 'tdr-hint' }, ['月単位の各バッチで取得する上限。普通の ML なら 1000 で十分。多すぎると 1 リクエストが重くなる。']),
   );
   pane.appendChild(grid);
 
@@ -408,65 +433,88 @@ function buildOutlookImport(pane: HTMLElement, draft: RuntimeSettings, root: HTM
       return;
     }
 
-    const filter = {
+    const baseFilter = {
       to: parseAddressList(toArea.value),
       cc: parseAddressList(ccArea.value),
-      since: sinceInp.value || undefined,
-      until: untilInp.value || undefined,
       max: Number(maxInp.value) || 1000,
     };
     ac = new AbortController();
     const signal = ac.signal;
     inSearch = true;
     btn.textContent = '停止';
-    status.textContent = 'Outlook を検索中… (検索開始後は relay 側の処理が完了するまで停止できません)';
     hideBar();
+
+    // 期間を月単位の半開区間 [since, until] に分割 (until は「その日いっぱい含む」relay 仕様)。
+    // 1 ヶ月以下なら 1 チャンクのまま。
+    const sinceStr = sinceInp.value || iso(yearAgo);
+    const untilStr = untilInp.value || iso(today);
+    const chunks = splitPeriodMonthly(sinceStr, untilStr);
+
+    if (!confirm(`Outlook から取り込みます (${sinceStr} 〜 ${untilStr}、${chunks.length} 期間に分割)。期間ごとに「最大 ${baseFilter.max} 件」まで取得して順次投入します。よろしいですか?`)) {
+      ac = null; inSearch = false; btn.textContent = RUN_LABEL;
+      status.textContent = 'キャンセル';
+      return;
+    }
+
     void (async () => {
+      let totalFetched = 0, totalAdded = 0, totalSkipped = 0, totalSegments = 0;
       try {
-        // ① まず対象件数を取得して提示
-        const mails = await fetchOutlookMails(draft.relayBaseUrl, filter, signal);
-        inSearch = false; // 検索フェーズ完了
-        if (mails.length === 0) {
-          status.textContent = '該当するメールがありませんでした (条件・期間を確認)';
-          toast(root, '該当メール 0 件', 'warn');
-          return;
+        for (let i = 0; i < chunks.length; i++) {
+          if (signal.aborted) break;
+          const c = chunks[i];
+          const label = `期間 ${i + 1}/${chunks.length} (${c.since} 〜 ${c.until})`;
+          inSearch = true;
+          status.textContent = `${label}: Outlook を検索中…`;
+
+          const mails = await fetchOutlookMails(draft.relayBaseUrl, { ...baseFilter, since: c.since, until: c.until }, signal);
+          inSearch = false;
+          if (signal.aborted) break;
+          totalFetched += mails.length;
+          if (mails.length === 0) {
+            status.textContent = `${label}: 該当 0 件 (累計 取得 ${totalFetched} / 新規 ${totalAdded})`;
+            continue;
+          }
+
+          // 埋め込み + 保存
+          let embedded = 0, saved = 0;
+          const r = await ingestToSegments(toIngestMails(mails), draft, siteUrl, (phase, done, total) => {
+            if (phase === 'sync') { status.textContent = `${label}: 準備中…`; return; }
+            if (phase === 'embed') embedded = done;
+            if (phase === 'upload') saved = done;
+            const units = (total || mails.length) * 2 || 1;
+            const pct = Math.min(100, Math.round((embedded + saved) / units * 100));
+            // 全体進捗 = 完了済チャンク + 現チャンク内の比率
+            const overall = Math.round(((i + pct / 100) / chunks.length) * 100);
+            showBar(overall);
+            status.textContent = `${label}: 埋め込み ${embedded}/${total} ・ 保存 ${saved}/${total} 件 (累計 取得 ${totalFetched} / 新規 ${totalAdded + r.added})`;
+          }, signal);
+          totalAdded += r.added;
+          totalSkipped += r.skipped;
+          totalSegments += r.segments;
+          if (r.cancelled) break;
         }
-        status.textContent = `対象 ${mails.length} 件が見つかりました`;
-        if (!confirm(`Outlook から ${mails.length} 件取り込みます。よろしいですか? (実行中は「停止」で中断可)`)) {
-          status.textContent = `キャンセル (対象 ${mails.length} 件)`;
-          return;
-        }
-        // ② 埋め込み → 投入 (進捗バー + 件数。埋め込みと保存を 1 本のバーで単調増加)。
-        let embedded = 0, saved = 0;
-        const r = await ingestToSegments(toIngestMails(mails), draft, siteUrl, (phase, done, total) => {
-          if (phase === 'sync') { status.textContent = '準備中…'; return; }
-          if (phase === 'embed') embedded = done;
-          if (phase === 'upload') saved = done;
-          const units = (total || mails.length) * 2 || 1;
-          const pct = Math.min(100, Math.round((embedded + saved) / units * 100));
-          showBar(pct);
-          status.textContent = `埋め込み ${embedded}/${total} ・ 保存 ${saved}/${total} 件 (${pct}%)`;
-        }, signal);
         hideBar();
-        const dup = r.skipped ? ` / 重複スキップ ${r.skipped} 件` : '';
-        if (r.cancelled) {
-          status.textContent = `停止しました: 保存済み 新規 ${r.added} 件 (セグメント ${r.segments})${dup}。再実行で続きから取り込めます。`;
-          toast(root, `停止 (新規 ${r.added} 件は保存済み)`, 'warn');
-        } else if (r.added === 0) {
-          // 新規 0 件 = 取得分はすべて登録済み。失敗ではない旨を明示。
-          status.textContent = `すべて登録済みでした (取得 ${mails.length} 件 / 新規 0 件)。SharePoint への追記はありません。`;
-          toast(root, `新規なし (${mails.length} 件はすべて登録済み)`, 'warn');
+        const dup = totalSkipped ? ` / 重複スキップ ${totalSkipped} 件` : '';
+        if (signal.aborted) {
+          status.textContent = `停止しました: ${chunks.length} 期間中 ${totalAdded} 件保存済み (セグメント ${totalSegments})${dup}`;
+          toast(root, `停止 (新規 ${totalAdded} 件は保存済み)`, 'warn');
+        } else if (totalAdded === 0 && totalFetched > 0) {
+          status.textContent = `すべて登録済みでした (取得 ${totalFetched} 件 / 新規 0 件)`;
+          toast(root, `新規なし (${totalFetched} 件はすべて登録済み)`, 'warn');
+        } else if (totalFetched === 0) {
+          status.textContent = `該当メールがありませんでした (${chunks.length} 期間検索済み)`;
+          toast(root, '該当メール 0 件', 'warn');
         } else {
-          status.textContent = `完了: 取得 ${mails.length} 件 / 新規 ${r.added} 件 (セグメント ${r.segments})${dup}`;
-          toast(root, `Outlook から ${r.added} 件取り込みました`, 'ok');
+          status.textContent = `完了: ${chunks.length} 期間 / 取得 ${totalFetched} 件 / 新規 ${totalAdded} 件 (セグメント ${totalSegments})${dup}`;
+          toast(root, `Outlook から ${totalAdded} 件取り込みました (${chunks.length} 期間)`, 'ok');
         }
       } catch (e) {
         if (signal.aborted || (e instanceof Error && e.name === 'AbortError')) {
           status.textContent = inSearch
-            ? 'Outlook の検索処理は relay 側で完了するまで継続します (結果は取り込まずに破棄)。'
-            : '停止しました';
+            ? `Outlook の検索処理は relay 側で完了するまで継続します (結果は破棄、累計 新規 ${totalAdded} 件は保存済み)。`
+            : `停止しました (累計 新規 ${totalAdded} 件は保存済み)`;
         } else {
-          status.textContent = '失敗';
+          status.textContent = `失敗 (累計 新規 ${totalAdded} 件は保存済み)`;
           toast(root, `インポート失敗: ${e instanceof Error ? e.message : String(e)}`, 'error');
         }
       } finally {
