@@ -56,19 +56,29 @@ export function renderMarkdown(md: string): string {
       continue;
     }
 
-    // 箇条書き
+    // 箇条書き (字下げによるネスト対応。2 スペース = 1 階層)
     if (/^\s*[-*+]\s+/.test(line)) {
-      const buf: string[] = [];
-      while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) { buf.push(lines[i].replace(/^\s*[-*+]\s+/, '')); i++; }
-      out.push('<ul>' + buf.map(b => `<li>${inline(escapeHtml(b))}</li>`).join('') + '</ul>');
+      const items: { depth: number; text: string }[] = [];
+      while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) {
+        const m = /^([ \t]*)[-*+]\s+(.*)$/.exec(lines[i])!;
+        const indent = m[1].replace(/\t/g, '  ').length;
+        items.push({ depth: Math.floor(indent / 2), text: m[2] });
+        i++;
+      }
+      out.push(renderNestedList(items, 'ul'));
       continue;
     }
 
-    // 番号リスト
+    // 番号リスト (ネスト対応)
     if (/^\s*\d+\.\s+/.test(line)) {
-      const buf: string[] = [];
-      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) { buf.push(lines[i].replace(/^\s*\d+\.\s+/, '')); i++; }
-      out.push('<ol>' + buf.map(b => `<li>${inline(escapeHtml(b))}</li>`).join('') + '</ol>');
+      const items: { depth: number; text: string }[] = [];
+      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
+        const m = /^([ \t]*)\d+\.\s+(.*)$/.exec(lines[i])!;
+        const indent = m[1].replace(/\t/g, '  ').length;
+        items.push({ depth: Math.floor(indent / 2), text: m[2] });
+        i++;
+      }
+      out.push(renderNestedList(items, 'ol'));
       continue;
     }
 
@@ -82,4 +92,32 @@ export function renderMarkdown(md: string): string {
   }
 
   return out.join('\n');
+}
+
+/** 字下げ depth (0,1,2..) から HTML を組み立てる。深くなれば <li> の中に
+ *  入れ子の <ul>/<ol> を作り、浅くなれば閉じる。階層リストで読みやすくする。 */
+function renderNestedList(items: { depth: number; text: string }[], tag: 'ul' | 'ol'): string {
+  if (items.length === 0) return '';
+  const min = Math.min(...items.map(x => x.depth));
+  const norm = items.map(x => ({ depth: Math.max(0, x.depth - min), text: x.text }));
+  let html = '';
+  let depth = -1;
+  for (const it of norm) {
+    if (depth < 0) {
+      html += `<${tag}><li>` + inline(escapeHtml(it.text));
+      depth = it.depth;
+    } else if (it.depth > depth) {
+      for (let d = depth; d < it.depth; d++) html += `<${tag}><li>`;
+      html += inline(escapeHtml(it.text));
+      depth = it.depth;
+    } else if (it.depth < depth) {
+      for (let d = depth; d > it.depth; d--) html += `</li></${tag}>`;
+      html += `</li><li>` + inline(escapeHtml(it.text));
+      depth = it.depth;
+    } else {
+      html += `</li><li>` + inline(escapeHtml(it.text));
+    }
+  }
+  while (depth >= 0) { html += `</li></${tag}>`; depth--; }
+  return html;
 }
