@@ -114,6 +114,8 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     el('span', { html: icons.plus(15) }), 'New session',
   ]);
   newBtn.addEventListener('click', startNewSession);
+  const searchBtn = el('button', { class: 'tdr-search-btn', 'aria-label': 'チャット履歴を検索', title: 'チャット履歴を検索', html: icons.search(16) });
+  searchBtn.addEventListener('click', () => openHistorySearch());
 
   function refreshList(): void {
     sessionList.replaceChildren();
@@ -166,6 +168,101 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     currentId = id;
     renderSession(s);
     refreshList();
+  }
+
+  /** チャット履歴の横断検索 (Spira のチケット検索 UI を踏襲)。 */
+  function openHistorySearch(): void {
+    const existing = root.querySelector<HTMLElement>('.tdr-search-backdrop');
+    if (existing) { existing.querySelector<HTMLInputElement>('.tdr-search-input')?.focus(); return; }
+
+    const inp = el('input', {
+      type: 'text', class: 'tdr-search-input', placeholder: 'タイトル・質問・回答で検索…',
+      autocomplete: 'off', spellcheck: 'false',
+    }) as HTMLInputElement;
+    const summary = el('div', { class: 'tdr-search-summary' });
+    const closeBtn = el('button', { class: 'tdr-iconbtn tdr-search-close', 'aria-label': '閉じる', html: icons.close(16) });
+    const head = el('div', { class: 'tdr-search-head' }, [
+      el('span', { class: 'tdr-search-icon', html: icons.search(18) }),
+      inp, closeBtn,
+    ]);
+    const body = el('div', { class: 'tdr-search-body' });
+    const foot = el('div', { class: 'tdr-search-foot' }, [summary]);
+    const modal = el('div', { class: 'tdr-modal tdr-search-modal', role: 'dialog', 'aria-modal': 'true' }, [head, body, foot]);
+    const backdrop = el('div', { class: 'tdr-backdrop tdr-search-backdrop' }, [modal]);
+
+    const close = (): void => { backdrop.remove(); document.removeEventListener('keydown', onKey); };
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') close(); };
+    backdrop.addEventListener('mousedown', e => { if (e.target === backdrop) close(); });
+    closeBtn.addEventListener('click', close);
+    document.addEventListener('keydown', onKey);
+    root.appendChild(backdrop);
+    setTimeout(() => { inp.focus(); }, 0);
+
+    const hint = (title: string, desc: string): HTMLElement => el('div', { class: 'tdr-search-hint' }, [
+      el('div', { class: 'tdr-search-hint-title' }, [title]),
+      el('div', { class: 'tdr-search-hint-desc' }, [desc]),
+    ]);
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let last = '';
+    const run = (q: string): void => {
+      const trimmed = q.trim();
+      if (trimmed === last) return;
+      last = trimmed;
+      body.replaceChildren();
+      if (!trimmed) {
+        summary.textContent = '';
+        body.appendChild(hint('検索ワードを入力してください', 'チャット履歴のタイトル・質問・回答から探します。'));
+        return;
+      }
+      const results = searchSessions(trimmed);
+      summary.textContent = results.length === 0 ? '0 件' : `${results.length} セッション`;
+      if (results.length === 0) { body.appendChild(hint('結果なし', '別のキーワードで試してください。')); return; }
+      const list = el('div', { class: 'tdr-search-results' });
+      for (const r of results) {
+        const card = el('div', { class: 'tdr-search-result' });
+        const titleEl = el('div', { class: 'tdr-search-result-title' });
+        highlightInto(titleEl, r.session.title, trimmed);
+        card.appendChild(titleEl);
+        if (r.snippet) {
+          const snip = el('div', { class: 'tdr-search-result-snippet' });
+          highlightInto(snip, r.snippet, trimmed);
+          card.appendChild(snip);
+        }
+        card.appendChild(el('div', { class: 'tdr-search-result-meta' }, [`${r.matches} 件ヒット ・ ${r.session.turns.length} ターン`]));
+        card.addEventListener('click', () => { close(); openSession(r.session.id); });
+        list.appendChild(card);
+      }
+      body.appendChild(list);
+    };
+    inp.addEventListener('input', () => { if (timer) clearTimeout(timer); timer = setTimeout(() => run(inp.value), 150); });
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') { if (timer) { clearTimeout(timer); timer = null; } run(inp.value); } });
+    body.appendChild(hint('検索ワードを入力してください', 'チャット履歴のタイトル・質問・回答から探します。'));
+  }
+
+  function searchSessions(q: string): Array<{ session: ChatSession; matches: number; snippet: string }> {
+    const ql = q.toLowerCase();
+    const out: Array<{ session: ChatSession; matches: number; snippet: string }> = [];
+    for (const s of listSessions()) {
+      let matches = 0;
+      let snippet = '';
+      if (s.title.toLowerCase().includes(ql)) { matches++; if (!snippet) snippet = s.title; }
+      for (const t of s.turns) {
+        if (t.q.toLowerCase().includes(ql)) { matches++; if (!snippet) snippet = `Q: ${t.q}`; }
+        const al = t.answer.toLowerCase();
+        if (al.includes(ql)) {
+          matches++;
+          if (!snippet) {
+            const idx = al.indexOf(ql);
+            const start = Math.max(0, idx - 30); const end = Math.min(t.answer.length, idx + ql.length + 60);
+            snippet = (start > 0 ? '…' : '') + t.answer.slice(start, end).replace(/\n+/g, ' ') + (end < t.answer.length ? '…' : '');
+          }
+        }
+      }
+      if (matches > 0) out.push({ session: s, matches, snippet });
+    }
+    out.sort((a, b) => b.matches - a.matches || (a.session.updatedAt < b.session.updatedAt ? 1 : -1));
+    return out;
   }
 
   // ── スレッド描画 ──
@@ -519,7 +616,10 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
   thread.appendChild(emptyState);
   refreshList();
 
-  const sidebar = el('aside', { class: 'tdr-sidebar' }, [newBtn, sessionList]);
+  const sidebar = el('aside', { class: 'tdr-sidebar' }, [
+    el('div', { class: 'tdr-sidebar-head' }, [newBtn, searchBtn]),
+    sessionList,
+  ]);
   const storedW = Number(localStorage.getItem(SIDEBAR_W_KEY) || '');
   sidebar.style.width = `${clampW(storedW || 260)}px`;
 
