@@ -130,7 +130,9 @@
 #tadori-root .tdr-composer-inner .tdr-note-form,#tadori-root .tdr-composer-inner .tdr-note-hint{max-width:none;margin-left:0;margin-right:0;}
 #tadori-root .tdr-model-pick{display:block;max-width:240px;margin:0 0 var(--s-3);padding:3px 8px;font-size:var(--fs-xs);font-family:inherit;background:transparent;color:var(--ink-3);border:1px solid var(--line-strong);border-radius:var(--r-2);outline:none;cursor:pointer;}
 #tadori-root .tdr-model-pick:hover{color:var(--ink);border-color:var(--ink-4);}
-#tadori-root .tdr-copy{display:inline-flex;align-items:center;gap:var(--s-2);margin-top:var(--s-4);padding:3px 9px;font-size:var(--fs-xs);font-family:inherit;color:var(--ink-3);background:transparent;border:1px solid var(--line);border-radius:var(--r-2);cursor:pointer;}
+#tadori-root .tdr-turn-actions{display:flex;align-items:center;gap:var(--s-3);margin-top:var(--s-4);}
+#tadori-root .tdr-turn-cost{font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink-4);}
+#tadori-root .tdr-copy{display:inline-flex;align-items:center;gap:var(--s-2);padding:3px 9px;font-size:var(--fs-xs);font-family:inherit;color:var(--ink-3);background:transparent;border:1px solid var(--line);border-radius:var(--r-2);cursor:pointer;}
 #tadori-root .tdr-copy:hover{color:var(--ink);background:var(--paper-2);border-color:var(--line-strong);}
 #tadori-root .tdr-copy.is-done{color:var(--ok);border-color:var(--ok);}
 #tadori-root .tdr-copy .ic{display:inline-flex;}

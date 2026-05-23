@@ -19,6 +19,8 @@ export interface SavedTurn {
   answer: string;
   hits: SavedHit[];
   ms: number;
+  /** このやり取りで発生した AI 利用料の目安 (円)。古い履歴では未設定。 */
+  yen?: number;
 }
 
 export interface ChatSession {

@@ -4,7 +4,9 @@
 import type { RuntimeSettings } from '../api/aiSettings';
 import { streamClaude } from '../api/aiClaude';
 import { recordChat } from '../usage/tracker';
-import { estimateTokens } from '../usage/pricing';
+import { chatYen, estimateTokens } from '../usage/pricing';
+
+export interface ChatUsage { model: string; inputTokens: number; outputTokens: number; yen: number; }
 
 export interface RagSource {
   /** 1 始まりの出典番号 (回答中の [n] と対応)。 */
@@ -131,6 +133,7 @@ export async function generateAnswer(
   onTitle?: (title: string) => void,
   history?: ChatHistoryMsg[],
   onSuggest?: (qs: string[]) => void,
+  onUsage?: (u: ChatUsage) => void,
 ): Promise<string> {
   const userPrompt = buildUserPrompt(question, sources);
   const hist = history ?? [];
@@ -148,7 +151,9 @@ export async function generateAnswer(
       signal,
     });
     sep.flush();
-    recordChat(s.claudeModel, inputTokens, estimateTokens(sep.body));
+    const outTok = estimateTokens(sep.body);
+    recordChat(s.claudeModel, inputTokens, outTok);
+    onUsage?.({ model: s.claudeModel, inputTokens, outputTokens: outTok, yen: chatYen(s.claudeModel, inputTokens + outTok) });
     return sep.body;
   }
 
@@ -197,7 +202,9 @@ export async function generateAnswer(
       const data = t.slice(5).trim();
       if (data === '[DONE]') {
         sep.flush();
-        recordChat(s.chatModel, inputTokens, estimateTokens(sep.body));
+        const out = estimateTokens(sep.body);
+        recordChat(s.chatModel, inputTokens, out);
+        onUsage?.({ model: s.chatModel, inputTokens, outputTokens: out, yen: chatYen(s.chatModel, inputTokens + out) });
         return sep.body;
       }
       try {
@@ -208,6 +215,8 @@ export async function generateAnswer(
     }
   }
   sep.flush();
-  recordChat(s.chatModel, inputTokens, estimateTokens(sep.body));
+  const outTok = estimateTokens(sep.body);
+  recordChat(s.chatModel, inputTokens, outTok);
+  onUsage?.({ model: s.chatModel, inputTokens, outputTokens: outTok, yen: chatYen(s.chatModel, inputTokens + outTok) });
   return sep.body;
 }

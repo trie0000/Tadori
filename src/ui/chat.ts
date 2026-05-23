@@ -174,7 +174,7 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     return { turnEl, answerText, metaEl, aBody };
   }
 
-  function finalizeTurn(refs: TurnRefs, fullMarkdown: string, hits: SavedHit[], ms: number, relayBaseUrl: string, query = ''): void {
+  function finalizeTurn(refs: TurnRefs, fullMarkdown: string, hits: SavedHit[], ms: number, relayBaseUrl: string, query = '', yen?: number): void {
     refs.answerText.innerHTML = renderMarkdown(fullMarkdown).replace(
       /\[(\d+)\]/g,
       (_, n) => `<span class="cite" data-n="${n}">[${n}]</span>`,
@@ -183,12 +183,22 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
       el('span', {}, [`${hits.length} 件参照`]),
       el('span', { class: 'mono' }, [`${ms} ms`]),
     );
-    refs.aBody.appendChild(makeCopyBtn(fullMarkdown));
+    // コピーボタンと利用料(目安) を 1 行で。
+    const actions = el('div', { class: 'tdr-turn-actions' }, [makeCopyBtn(fullMarkdown)]);
+    if (yen != null) {
+      actions.appendChild(el('span', { class: 'tdr-turn-cost', title: 'このやり取りの AI 利用料 (目安)' }, [fmtYen(yen)]));
+    }
+    refs.aBody.appendChild(actions);
     // 回答中に [n] として実際に引用された番号を抽出。
     const cited = new Set<number>();
     for (const m of fullMarkdown.matchAll(/\[(\d+)\]/g)) cited.add(Number(m[1]));
     if (hits.length) appendSources(refs.aBody, hits, relayBaseUrl, query, cited);
     wireCiteJump(refs.aBody);
+  }
+
+  function fmtYen(n: number): string {
+    const v = n < 0.1 ? n.toFixed(3) : n.toFixed(2);
+    return '¥' + v;
   }
 
   // 回答中の [n] 引用クリックで該当の出典カードへスクロール + 展開 + ハイライト。
@@ -252,7 +262,7 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     const relayBaseUrl = loadSettings().relayBaseUrl;
     for (const t of s.turns) {
       const refs = buildTurn(t.q);
-      finalizeTurn(refs, t.answer, t.hits, t.ms, relayBaseUrl, t.q);
+      finalizeTurn(refs, t.answer, t.hits, t.ms, relayBaseUrl, t.q, t.yen);
     }
     scrollBottom();
   }
@@ -294,14 +304,15 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     let aiTitle = '';
     let suggestions: string[] = [];
     let hits: SavedHit[] = [];
+    let yen: number | undefined = undefined;
     let t0 = performance.now();
 
     const save = (): void => {
       if (!full.trim()) return;
       const ms = Math.round(performance.now() - t0);
-      finalizeTurn(refs, full, hits, ms, s.relayBaseUrl, opts.displayQ);
+      finalizeTurn(refs, full, hits, ms, s.relayBaseUrl, opts.displayQ, yen);
       if (suggestions.length) renderSuggest(refs.aBody, suggestions);
-      const saved = appendTurn(currentId, { q: opts.displayQ, answer: full, hits, ms });
+      const saved = appendTurn(currentId, { q: opts.displayQ, answer: full, hits, ms, yen });
       if (saved.turns.length === 1 && aiTitle) setTitle(currentId, aiTitle);
       refreshList();
     };
@@ -328,7 +339,7 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
         if (firstDelta) { refs.answerText.textContent = ''; firstDelta = false; } // 「生成中」を消す
         refs.answerText.textContent = full; // ストリーム中はプレーン (タイプ感)
         scrollBottom();
-      }, signal, title => { aiTitle = title; }, history, qs => { suggestions = qs; });
+      }, signal, title => { aiTitle = title; }, history, qs => { suggestions = qs; }, u => { yen = u.yen; });
 
       save();
 
