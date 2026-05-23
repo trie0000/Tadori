@@ -194,6 +194,12 @@
 #tadori-root .tdr-hub-navitem{display:block;padding:8px 16px;border-left:3px solid transparent;font-size:var(--fs-sm);color:var(--ink-3);cursor:pointer;}
 #tadori-root .tdr-hub-navitem:hover{background:var(--paper-2-strong);color:var(--ink);}
 #tadori-root .tdr-hub-navitem.is-active{background:var(--accent-soft);color:var(--ink);border-left-color:var(--accent);font-weight:600;}
+/* Spira 流のカード型ラジオ (文字サイズ / 送信キー など) */
+#tadori-root .tdr-radio-card{display:flex;align-items:center;gap:var(--s-3);padding:var(--s-4) var(--s-5);background:var(--paper-2);border:1px solid var(--line);border-radius:var(--r-2);margin-top:var(--s-2);cursor:pointer;}
+#tadori-root .tdr-radio-card:hover{border-color:var(--line-strong);background:var(--paper-2-strong);}
+#tadori-root .tdr-radio-card.is-checked{border-color:var(--accent);background:var(--accent-soft);}
+#tadori-root .tdr-radio-card-title{font-size:var(--fs-md);color:var(--ink);font-weight:600;}
+#tadori-root .tdr-radio-card-desc{font-size:var(--fs-xs);color:var(--ink-3);margin-top:2px;}
 #tadori-root .tdr-hub-group.is-danger{color:var(--danger);}
 #tadori-root .tdr-hub-navitem.is-danger{color:var(--danger);}
 #tadori-root .tdr-hub-navitem.is-danger.is-active{background:var(--danger-soft);color:var(--danger);border-left-color:var(--danger);}

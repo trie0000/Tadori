@@ -477,36 +477,66 @@ function buildDisplayPane(pane: HTMLElement, root: HTMLElement): void {
   });
   pane.appendChild(el('div', { style: 'margin-top:var(--s-3)' }, [toggleBtn]));
 
-  // 文字サイズ (小 / 中 / 大) — 即時反映。
+  // 文字サイズ (小 / 中 / 大) — 即時反映。Spira と同じカード型ラジオ。
   pane.appendChild(el('p', { class: 'tdr-pane-title', style: 'margin-top:var(--s-7)' }, ['文字サイズ']));
-  const sizes: { v: 'sm' | 'md' | 'lg'; label: string }[] = [
-    { v: 'sm', label: '小' }, { v: 'md', label: '中 (既定)' }, { v: 'lg', label: '大' },
-  ];
+  pane.appendChild(el('p', { class: 'tdr-hint' }, ['ラジオを選んだ瞬間に反映され、この端末にだけ保存されます。']));
   const curSize = getFontSize();
-  const sizeRow = el('div', { style: 'display:flex;gap:var(--s-5);margin-top:var(--s-3)' });
-  for (const s of sizes) {
-    const r = el('input', { type: 'radio', name: 'tdr-font-size', value: s.v }) as HTMLInputElement;
-    if (s.v === curSize) r.checked = true;
-    r.addEventListener('change', () => { if (r.checked) setFontSize(s.v); });
-    sizeRow.appendChild(el('label', { style: 'display:inline-flex;align-items:center;gap:var(--s-2);cursor:pointer' }, [r, el('span', {}, [s.label])]));
+  for (const opt of [
+    { v: 'sm', label: '小', desc: '一覧で多くの行を見たい場合' },
+    { v: 'md', label: '中 (既定)', desc: '標準サイズ — バランス重視' },
+    { v: 'lg', label: '大', desc: '視認性重視・長時間作業向け' },
+  ] as const) {
+    pane.appendChild(radioCard({
+      name: 'tdr-font-size', value: opt.v, checked: opt.v === curSize,
+      title: opt.label, desc: opt.desc,
+      onSelect: () => setFontSize(opt.v),
+    }));
   }
-  pane.appendChild(sizeRow);
 
-  // チャットの送信キー切替 (即時保存)。
+  // チャット送信キー — 即時保存。
   pane.appendChild(el('p', { class: 'tdr-pane-title', style: 'margin-top:var(--s-7)' }, ['チャット送信キー']));
-  const cur = loadSettings().enterSends;
-  const enterRadio = el('input', { type: 'radio', name: 'enter-send', value: 'enter' }) as HTMLInputElement;
-  const ctrlRadio  = el('input', { type: 'radio', name: 'enter-send', value: 'ctrl' }) as HTMLInputElement;
-  if (cur) enterRadio.checked = true; else ctrlRadio.checked = true;
-  const apply = (enterSends: boolean): void => { saveSettings({ enterSends }); toast(root, enterSends ? 'Enter で送信に切替' : '⌘/Ctrl+Enter で送信に切替', 'ok'); };
-  enterRadio.addEventListener('change', () => { if (enterRadio.checked) apply(true); });
-  ctrlRadio.addEventListener('change', () => { if (ctrlRadio.checked) apply(false); });
-  pane.appendChild(el('label', { style: 'display:flex;align-items:center;gap:var(--s-3);margin-top:var(--s-3);cursor:pointer' }, [
-    ctrlRadio, el('span', {}, ['⌘ / Ctrl + Enter で送信 (Enter は改行)']),
-  ]));
-  pane.appendChild(el('label', { style: 'display:flex;align-items:center;gap:var(--s-3);margin-top:var(--s-2);cursor:pointer' }, [
-    enterRadio, el('span', {}, ['Enter で送信 (Shift+Enter で改行)']),
-  ]));
+  pane.appendChild(el('p', { class: 'tdr-hint' }, ['入力欄で Enter キーを押した時の挙動を選びます。']));
+  const enterSends = loadSettings().enterSends;
+  pane.appendChild(radioCard({
+    name: 'tdr-enter-send', value: 'ctrl', checked: !enterSends,
+    title: '⌘ / Ctrl + Enter で送信',
+    desc: 'Enter は改行。長文を書きやすい (既定)',
+    onSelect: () => { saveSettings({ enterSends: false }); toast(root, '⌘/Ctrl+Enter で送信に切替', 'ok'); },
+  }));
+  pane.appendChild(radioCard({
+    name: 'tdr-enter-send', value: 'enter', checked: enterSends,
+    title: 'Enter で送信',
+    desc: 'Shift + Enter で改行。テンポよく投げたい人向け',
+    onSelect: () => { saveSettings({ enterSends: true }); toast(root, 'Enter で送信に切替', 'ok'); },
+  }));
+}
+
+/** Spira 流のカード型ラジオ (選択時に薄い背景強調 + タイトル + 説明)。 */
+function radioCard(opts: {
+  name: string; value: string; checked: boolean;
+  title: string; desc: string;
+  onSelect: () => void;
+}): HTMLElement {
+  const radio = el('input', { type: 'radio', name: opts.name, value: opts.value, style: 'margin:0;flex-shrink:0' }) as HTMLInputElement;
+  if (opts.checked) radio.checked = true;
+  const label = el('label', { class: 'tdr-radio-card' + (opts.checked ? ' is-checked' : '') }, [
+    radio,
+    el('div', { style: 'flex:1;min-width:0' }, [
+      el('div', { class: 'tdr-radio-card-title' }, [opts.title]),
+      el('div', { class: 'tdr-radio-card-desc' }, [opts.desc]),
+    ]),
+  ]);
+  radio.addEventListener('change', () => {
+    if (!radio.checked) return;
+    // 同名グループの他カードから is-checked を外し、自分に付ける
+    const root = label.closest('.tdr-hub-pane') ?? label.parentElement;
+    if (root) for (const c of root.querySelectorAll<HTMLElement>(`.tdr-radio-card`)) {
+      const r = c.querySelector<HTMLInputElement>(`input[name="${opts.name}"]`);
+      if (r) c.classList.toggle('is-checked', r.checked);
+    }
+    opts.onSelect();
+  });
+  return label;
 }
 
 // ─── 診断 ─────────────────────────────────────────────────────────────────────
