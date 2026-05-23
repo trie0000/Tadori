@@ -624,37 +624,51 @@ function Invoke-OneNotePages {
         }
 
         $results = New-Object System.Collections.ArrayList
+        $failed = 0
         foreach ($pg in $targets) {
-            $section = $pg.ParentNode
-            $notebook = $section.ParentNode
-            while ($notebook -and ($notebook.LocalName -ne 'Notebook')) { $notebook = $notebook.ParentNode }
-            $content = ''
-            try { $one.GetPageContent([string]$pg.ID, [ref]$content) } catch { continue }
-            $text = ''
+            # 1 ページ失敗で全体を落とさない: 個別 try でスキップ。
             try {
-                [xml]$cdoc = $content
-                $tNodes = $cdoc.SelectNodes('//*[local-name()="T"]')
-                $parts = @()
-                foreach ($t in $tNodes) {
-                    $raw = [string]$t.InnerText
-                    if ($raw) { $parts += $raw }
+                $section = $pg.ParentNode
+                $notebook = $section.ParentNode
+                while ($notebook -and ($notebook.LocalName -ne 'Notebook')) { $notebook = $notebook.ParentNode }
+                $content = '' # 必ずリセット (前ループの値を引き継がない)
+                try { $one.GetPageContent([string]$pg.ID, [ref]$content) }
+                catch {
+                    Write-Host ("[onenote] GetPageContent failed id={0} title='{1}' err={2}" -f [string]$pg.ID, [string]$pg.name, $_.Exception.Message)
+                    $failed++; continue
                 }
-                # 文字参照や軽い HTML タグを落として可読テキストに。
-                $text = ($parts -join "`n") -replace '&nbsp;', ' ' -replace '<[^>]+>', ''
-            } catch { }
-            [void]$results.Add(@{
-                pageId       = [string]$pg.ID
-                title        = [string]$pg.name
-                lastModified = [string]$pg.lastModifiedTime
-                notebook     = if ($notebook) { [string]$notebook.name } else { '' }
-                section      = [string]$section.name
-                body         = $text
-            })
+                if (-not $content) { $failed++; continue }
+                $text = ''
+                try {
+                    [xml]$cdoc = $content
+                    $tNodes = $cdoc.SelectNodes('//*[local-name()="T"]')
+                    $parts = @()
+                    foreach ($t in $tNodes) {
+                        $raw = [string]$t.InnerText
+                        if ($raw) { $parts += $raw }
+                    }
+                    # 文字参照や軽い HTML タグを落として可読テキストに。
+                    $text = ($parts -join "`n") -replace '&nbsp;', ' ' -replace '<[^>]+>', ''
+                } catch {
+                    Write-Host ("[onenote] parse failed id={0} title='{1}' err={2}" -f [string]$pg.ID, [string]$pg.name, $_.Exception.Message)
+                }
+                [void]$results.Add(@{
+                    pageId       = [string]$pg.ID
+                    title        = [string]$pg.name
+                    lastModified = [string]$pg.lastModifiedTime
+                    notebook     = if ($notebook) { [string]$notebook.name } else { '' }
+                    section      = if ($section)  { [string]$section.name  } else { '' }
+                    body         = $text
+                })
+            } catch {
+                Write-Host ("[onenote] page loop error: {0}" -f $_.Exception.Message)
+                $failed++
+            }
         }
 
         $sinceStr = if ($since) { $since.ToString('yyyy-MM-dd') } else { '' }
-        Write-Host ("[onenote] returned {0} pages (ids:{1} since:{2})" -f $results.Count, $ids.Count, $sinceStr)
-        Send-Json -Response $response -Status 200 -Body @{ ok = $true; count = $results.Count; pages = @($results) }
+        Write-Host ("[onenote] returned {0}/{1} pages (failed:{2} ids:{3} since:{4})" -f $results.Count, $targets.Count, $failed, $ids.Count, $sinceStr)
+        Send-Json -Response $response -Status 200 -Body @{ ok = $true; count = $results.Count; failed = $failed; pages = @($results) }
     }
     catch {
         Send-Error -Response $response -Status 500 -Code 'onenote_error' -Detail $_.Exception.Message
@@ -676,7 +690,31 @@ function Invoke-OneNoteOpen {
         return
     }
     try {
+        # NavigateTo(hierarchyObjectId, objectId, fNewWindow). 第 3 引数 $false で同一ウィンドウ。
+        # ページ ID を hierarchyObjectId に渡すと該当ページが選択 (= 該当部分にスクロール) される。
         $one.NavigateTo($id, $null, $false)
+
+        # COM 経由だと OneNote ウィンドウが裏に隠れたままになることが多いので、
+        # OS 側の API でフォアグラウンドに引き出す (Outlook 表示と同じ仕掛け)。
+        try {
+            if (-not ('Tadori.Native' -as [type])) {
+                Add-Type -Namespace Tadori -Name Native -MemberDefinition @'
+                    [System.Runtime.InteropServices.DllImport("user32.dll")]
+                    public static extern bool SetForegroundWindow(System.IntPtr hWnd);
+                    [System.Runtime.InteropServices.DllImport("user32.dll")]
+                    public static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);
+'@
+            }
+            # OneNote の主ウィンドウを Process から拾う。アプリが複数インスタンス起動している場合は
+            # MainWindowHandle が有効な (=ゼロでない) ものを優先。
+            $procs = Get-Process -Name ONENOTE -ErrorAction SilentlyContinue
+            $proc = $procs | Where-Object { $_.MainWindowHandle -ne [System.IntPtr]::Zero } | Select-Object -First 1
+            if ($proc) {
+                [void][Tadori.Native]::ShowWindow($proc.MainWindowHandle, 9)   # SW_RESTORE = 9
+                [void][Tadori.Native]::SetForegroundWindow($proc.MainWindowHandle)
+            }
+        } catch { }
+
         Write-Host ("[onenote] navigated to page id={0}" -f $id)
         Send-Json -Response $response -Status 200 -Body @{ ok = $true }
     }

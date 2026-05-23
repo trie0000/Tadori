@@ -633,12 +633,19 @@ function buildOneNoteImport(pane: HTMLElement, draft: RuntimeSettings, root: HTM
       stopBtn.style.display = ''; stopBtn.textContent = '停止';
       status.textContent = 'ページ本文を取得中…';
       try {
-        const pages = await fetchOneNotePages(draft.relayBaseUrl, { ids: newImports, max: 1000 }, signal);
+        const pages = await fetchOneNotePages(
+          draft.relayBaseUrl,
+          { ids: newImports, max: 1000, batchSize: 20 },
+          signal,
+          (done, total) => { status.textContent = `ページ本文を取得中… ${done}/${total}`; },
+        );
         if (pages.length === 0) {
           status.textContent = '取得できたページがありませんでした';
         } else {
           const mails = pagesToIngestMails(pages);
-          status.textContent = `${pages.length} ページ → ${mails.length} チャンク。埋め込みを開始…`;
+          const skipped = newImports.length - pages.length;
+          const skipNote = skipped > 0 ? ` (取得失敗 ${skipped} ページはスキップ)` : '';
+          status.textContent = `${pages.length} ページ → ${mails.length} チャンク${skipNote}。埋め込みを開始…`;
           let embedded = 0, saved = 0;
           const r = await ingestToSegments(mails, draft, siteUrl, (phase, done, total) => {
             if (phase === 'sync') { status.textContent = '準備中…'; return; }
