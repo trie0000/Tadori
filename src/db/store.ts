@@ -133,6 +133,16 @@ export class VectorDb {
     return s;
   }
 
+  /** 取り込み済みの OneNote ページ ID 集合 (kind=onenote の conversationId)。
+   *  取り込みペインで「既に取り込み済みか」を判定するのに使う。 */
+  importedOneNotePageIds(): Set<string> {
+    const out = new Set<string>();
+    for (const r of this.records.values()) {
+      if (r.kind === 'onenote' && r.conversationId) out.add(r.conversationId);
+    }
+    return out;
+  }
+
   /** 同一スレッド (conversationId) のレコードを受信日時の昇順で返す。 */
   byConversation(conversationId: string): MailRecord[] {
     if (!conversationId) return [];

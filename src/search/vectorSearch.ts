@@ -5,6 +5,7 @@ import { getEngine } from '../db/engine';
 import { embedQueryFor } from '../embeddings/router';
 import type { MailRecord } from '../db/store';
 import type { RuntimeSettings } from '../api/aiSettings';
+import { getExcludedOneNotePageIds } from '../onenote/exclude';
 
 export interface MailHit {
   messageId: string;
@@ -59,11 +60,20 @@ export async function searchVectors(
   const eng = await getEngine(siteUrl);
   if (eng.db.size === 0) return [];
   const qvec = await embedQueryFor(question, s);
-  return eng.db.search(qvec, topK, question, s.ragKeywordWeight).map(({ record, score }) => toHit(record, score));
+  // OneNote 除外指定があれば落とす。先に余裕を持って引いてからフィルタする。
+  const excluded = getExcludedOneNotePageIds();
+  const pull = excluded.size > 0 ? Math.max(topK * 2, topK + excluded.size) : topK;
+  const hits = eng.db.search(qvec, pull, question, s.ragKeywordWeight)
+    .filter(({ record }) => !(record.kind === 'onenote' && excluded.has(record.conversationId)))
+    .slice(0, topK);
+  return hits.map(({ record, score }) => toHit(record, score));
 }
 
 /** 同一スレッド (conversationId) の全メールを時系列で返す (経緯要約用)。 */
 export async function getThread(siteUrl: string, conversationId: string): Promise<MailHit[]> {
   const eng = await getEngine(siteUrl);
+  // 除外指定された OneNote ページは要約対象からも外す (チャンク全部 = 親ページごと)。
+  const excluded = getExcludedOneNotePageIds();
+  if (excluded.has(conversationId)) return [];
   return eng.db.byConversation(conversationId).map(r => toHit(r, 1));
 }

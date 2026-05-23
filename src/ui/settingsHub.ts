@@ -21,6 +21,7 @@ import { embedQueryFor } from '../embeddings/router';
 import { seedTestData, SAMPLE_MAILS } from '../dev/seed';
 import { fetchOutlookMails, toIngestMails } from '../outlook/import';
 import { fetchOneNoteHierarchy, fetchOneNotePages, pagesToIngestMails, type OneNoteNotebook } from '../onenote/import';
+import { getExcludedOneNotePageIds, setExcludedOneNotePageIds } from '../onenote/exclude';
 import { ingestToSegments } from '../db/writer';
 import { getEngine, wipeImportedMails } from '../db/engine';
 import { getFontSize, setFontSize } from '../utils/fontSize';
@@ -484,12 +485,13 @@ function buildOutlookImport(pane: HTMLElement, draft: RuntimeSettings, root: HTM
 function buildOneNoteImport(pane: HTMLElement, draft: RuntimeSettings, root: HTMLElement, siteUrl: string): void {
   pane.appendChild(el('p', { class: 'tdr-pane-title', style: 'margin-top:var(--s-8)' }, ['OneNote から取り込み']));
   pane.appendChild(el('p', { class: 'tdr-hint', style: 'margin:0 0 var(--s-4)' }, [
-    'OneNote の指定ノートブック/セクション配下のページを取り込みます (relay 経由で COM 抽出 → 自動チャンク分割)。Windows + OneNote 起動が必要。',
+    'OneNote のページをベクトル DB へ取り込みます (relay 経由で COM 抽出 → 自動チャンク分割)。',
+    'Windows + OneNote 起動が必要。既に取り込み済みのページは初期チェック ON で表示され、チェックを外すと検索/更新チェック対象から除外されます。',
   ]));
 
   const loadBtn  = el('button', { class: 'tdr-btn' }, [el('span', { html: icons.notebook(14) }), 'ノートブック一覧を取得']);
   const treeEl   = el('div', { class: 'tdr-onenote-tree', style: 'max-height:280px;overflow:auto;border:1px solid var(--line);border-radius:var(--r-2);padding:var(--s-4);margin-top:var(--s-3);display:none;' });
-  const runBtn   = el('button', { class: 'tdr-btn tdr-btn--primary', style: 'margin-top:var(--s-4);display:none' }, ['選択範囲を取り込む']);
+  const runBtn   = el('button', { class: 'tdr-btn tdr-btn--primary', style: 'margin-top:var(--s-4);display:none' }, ['選択内容を適用']);
   const stopBtn  = el('button', { class: 'tdr-btn', style: 'margin-top:var(--s-4);display:none' }, ['停止']);
   const status   = el('div', { style: 'font-size:var(--fs-sm);color:var(--ink-3);margin-top:var(--s-3)' }, ['']);
   const barFill  = el('div', { class: 'tdr-progress-fill' });
@@ -499,6 +501,8 @@ function buildOneNoteImport(pane: HTMLElement, draft: RuntimeSettings, root: HTM
   const hideBar = (): void => { bar.style.display = 'none'; barFill.style.width = '0%'; };
 
   let notebooks: OneNoteNotebook[] = [];
+  let importedIds = new Set<string>(); // DB に取り込み済みの page-id
+  let excludedIds = new Set<string>(); // 検索対象から除外している page-id
   let ac: AbortController | null = null;
 
   function selectedPageIds(): string[] {
@@ -520,6 +524,7 @@ function buildOneNoteImport(pane: HTMLElement, draft: RuntimeSettings, root: HTM
         nbCb, el('span', { html: icons.notebook(14), style: 'display:inline-flex;color:var(--ink-3)' }), el('span', {}, [nb.name]),
       ]);
       treeEl.appendChild(nbRow);
+      let nbAllChecked = true, nbAnyPage = false;
       for (const sec of nb.sections) {
         const pageList = el('div', { style: 'margin-left:var(--s-5)' });
         const secCb = el('input', { type: 'checkbox' }) as HTMLInputElement;
@@ -530,16 +535,29 @@ function buildOneNoteImport(pane: HTMLElement, draft: RuntimeSettings, root: HTM
           secCb, el('span', { html: icons.folder(14), style: 'display:inline-flex;color:var(--ink-3)' }), el('span', {}, [sec.name + ` (${sec.pages.length})`]),
         ]);
         secList.appendChild(secRow);
+        let secAllChecked = true, secAnyPage = false;
         for (const pg of sec.pages) {
+          const isImported = importedIds.has(pg.id);
+          const isExcluded = excludedIds.has(pg.id);
+          // 初期状態: 取り込み済み AND 除外指定なし → ON。それ以外 → OFF。
+          const initialChecked = isImported && !isExcluded;
           const pgCb = el('input', { type: 'checkbox', 'data-pid': pg.id }) as HTMLInputElement;
+          pgCb.checked = initialChecked;
+          const tag = isImported
+            ? el('span', { class: 'tdr-pill', style: 'background:var(--accent-soft);color:var(--accent-strong);font-size:var(--fs-xs);padding:1px 6px;border-radius:var(--r-1);margin-left:var(--s-2)' }, ['取り込み済み'])
+            : null;
           const pgRow = el('label', { style: 'display:flex;align-items:center;gap:var(--s-2);cursor:pointer;font-size:var(--fs-sm);color:var(--ink-3)' }, [
-            pgCb, el('span', {}, [pg.name]),
+            pgCb, el('span', {}, [pg.name]), ...(tag ? [tag] : []),
           ]);
           pageList.appendChild(pgRow);
+          secAnyPage = true; nbAnyPage = true;
+          if (!initialChecked) { secAllChecked = false; nbAllChecked = false; }
         }
         secList.appendChild(pageList);
+        secCb.checked = secAnyPage && secAllChecked;
       }
       treeEl.appendChild(secList);
+      nbCb.checked = nbAnyPage && nbAllChecked;
     }
   }
 
@@ -547,9 +565,16 @@ function buildOneNoteImport(pane: HTMLElement, draft: RuntimeSettings, root: HTM
     void (async () => {
       loadBtn.disabled = true; status.textContent = 'OneNote の階層を取得中…';
       try {
-        notebooks = await fetchOneNoteHierarchy(draft.relayBaseUrl);
+        const [hier, eng] = await Promise.all([
+          fetchOneNoteHierarchy(draft.relayBaseUrl),
+          getEngine(siteUrl),
+        ]);
+        notebooks = hier;
+        importedIds = eng.db.importedOneNotePageIds();
+        excludedIds = getExcludedOneNotePageIds();
         const total = notebooks.reduce((n, nb) => n + nb.sections.reduce((m, s) => m + s.pages.length, 0), 0);
-        status.textContent = `${notebooks.length} ノートブック / ${total} ページが見つかりました。取り込み対象にチェックを入れてください。`;
+        const checkedNow = total === 0 ? 0 : (importedIds.size - [...importedIds].filter(id => excludedIds.has(id)).length);
+        status.textContent = `${notebooks.length} ノートブック / ${total} ページ。取り込み済み ${importedIds.size} 件 (うち除外中 ${excludedIds.size} 件 / 検索対象 ${checkedNow} 件)。チェックの増減で「取り込み/除外」をまとめて適用します。`;
         treeEl.style.display = ''; runBtn.style.display = '';
         renderTree();
       } catch (e) {
@@ -559,60 +584,100 @@ function buildOneNoteImport(pane: HTMLElement, draft: RuntimeSettings, root: HTM
   });
 
   runBtn.addEventListener('click', () => {
-    const ids = selectedPageIds();
-    if (ids.length === 0) { toast(root, '取り込むページを選択してください', 'warn'); return; }
+    const checked = new Set(selectedPageIds());
+    const newImports: string[] = [];
+    const newlyExcluded: string[] = [];
+    const reincluded: string[] = [];
+    // ツリー全ページを走査して 3 つに振り分け。
+    for (const nb of notebooks) for (const sec of nb.sections) for (const pg of sec.pages) {
+      const isImported = importedIds.has(pg.id);
+      const isChecked = checked.has(pg.id);
+      if (isChecked && !isImported) newImports.push(pg.id);
+      else if (!isChecked && isImported) newlyExcluded.push(pg.id);
+      else if (isChecked && isImported && excludedIds.has(pg.id)) reincluded.push(pg.id);
+    }
+    if (newImports.length === 0 && newlyExcluded.length === 0 && reincluded.length === 0) {
+      toast(root, '変更なし', 'warn'); return;
+    }
+    const lines: string[] = [];
+    if (newImports.length)   lines.push(`新規取り込み: ${newImports.length} ページ`);
+    if (newlyExcluded.length) lines.push(`検索対象から除外: ${newlyExcluded.length} ページ`);
+    if (reincluded.length)   lines.push(`検索対象に再有効化: ${reincluded.length} ページ`);
     confirmModal({
-      root, title: 'OneNote 取り込み確認', primaryLabel: '取り込む',
-      message: `選択された ${ids.length} ページを取り込みます。長文ページは自動でチャンク分割されます。`,
-      onConfirm: () => { void doImport(ids); },
+      root, title: 'OneNote 取り込み適用', primaryLabel: '適用',
+      message: lines.join(' / ') + '。長文ページは自動でチャンク分割されます。',
+      onConfirm: () => { void doApply(newImports, newlyExcluded, reincluded); },
     });
   });
 
   stopBtn.addEventListener('click', () => { ac?.abort(); stopBtn.textContent = '停止中…'; });
 
-  async function doImport(pageIds: string[]): Promise<void> {
+  async function doApply(newImports: string[], newlyExcluded: string[], reincluded: string[]): Promise<void> {
     ac = new AbortController();
     const signal = ac.signal;
-    runBtn.disabled = true; stopBtn.style.display = ''; stopBtn.textContent = '停止';
-    status.textContent = 'ページ本文を取得中…';
+    runBtn.disabled = true;
     hideBar();
-    try {
-      const pages = await fetchOneNotePages(draft.relayBaseUrl, { ids: pageIds, max: 1000 }, signal);
-      if (pages.length === 0) { status.textContent = '取得できたページがありませんでした'; return; }
-      const mails = pagesToIngestMails(pages);
-      status.textContent = `${pages.length} ページ → ${mails.length} チャンク。埋め込みを開始…`;
-      let embedded = 0, saved = 0;
-      const r = await ingestToSegments(mails, draft, siteUrl, (phase, done, total) => {
-        if (phase === 'sync') { status.textContent = '準備中…'; return; }
-        if (phase === 'embed') embedded = done;
-        if (phase === 'upload') saved = done;
-        const units = (total || mails.length) * 2 || 1;
-        const pct = Math.min(100, Math.round((embedded + saved) / units * 100));
-        showBar(pct);
-        status.textContent = `埋め込み ${embedded}/${total} ・ 保存 ${saved}/${total} チャンク (${pct}%)`;
-      }, signal);
-      hideBar();
-      const dup = r.skipped ? ` / 重複スキップ ${r.skipped}` : '';
-      if (r.cancelled) {
-        status.textContent = `停止しました: 保存済み 新規 ${r.added} チャンク (セグメント ${r.segments})${dup}`;
-        toast(root, `停止 (新規 ${r.added} チャンクは保存済み)`, 'warn');
-      } else if (r.added === 0) {
-        status.textContent = `すべて登録済みでした (${mails.length} チャンク / 新規 0)`;
-        toast(root, '新規なし (登録済み)', 'warn');
-      } else {
-        status.textContent = `完了: ${pages.length} ページ / 新規 ${r.added} チャンク (セグメント ${r.segments})${dup}`;
-        toast(root, `OneNote から ${r.added} チャンク取り込みました`, 'ok');
-      }
-    } catch (e) {
-      if (signal.aborted || (e instanceof Error && e.name === 'AbortError')) {
-        status.textContent = '停止しました';
-      } else {
-        status.textContent = '失敗';
-        toast(root, `OneNote 取り込み失敗: ${e instanceof Error ? e.message : String(e)}`, 'error');
-      }
-    } finally {
-      ac = null; runBtn.disabled = false; stopBtn.style.display = 'none'; hideBar();
+
+    // 1) 除外指定の更新 (即時 localStorage に反映)。
+    const nextExcluded = new Set(excludedIds);
+    for (const id of newlyExcluded) nextExcluded.add(id);
+    for (const id of reincluded)    nextExcluded.delete(id);
+    setExcludedOneNotePageIds(nextExcluded);
+    excludedIds = nextExcluded;
+    if (newlyExcluded.length || reincluded.length) {
+      status.textContent = `除外指定を更新: +${newlyExcluded.length} / −${reincluded.length}`;
     }
+
+    // 2) 新規取り込み (任意)。
+    if (newImports.length > 0) {
+      stopBtn.style.display = ''; stopBtn.textContent = '停止';
+      status.textContent = 'ページ本文を取得中…';
+      try {
+        const pages = await fetchOneNotePages(draft.relayBaseUrl, { ids: newImports, max: 1000 }, signal);
+        if (pages.length === 0) {
+          status.textContent = '取得できたページがありませんでした';
+        } else {
+          const mails = pagesToIngestMails(pages);
+          status.textContent = `${pages.length} ページ → ${mails.length} チャンク。埋め込みを開始…`;
+          let embedded = 0, saved = 0;
+          const r = await ingestToSegments(mails, draft, siteUrl, (phase, done, total) => {
+            if (phase === 'sync') { status.textContent = '準備中…'; return; }
+            if (phase === 'embed') embedded = done;
+            if (phase === 'upload') saved = done;
+            const units = (total || mails.length) * 2 || 1;
+            const pct = Math.min(100, Math.round((embedded + saved) / units * 100));
+            showBar(pct);
+            status.textContent = `埋め込み ${embedded}/${total} ・ 保存 ${saved}/${total} チャンク (${pct}%)`;
+          }, signal);
+          hideBar();
+          // 新規取り込んだ pageId は importedIds に追加。
+          for (const p of pages) importedIds.add(p.pageId);
+          const dup = r.skipped ? ` / 重複スキップ ${r.skipped}` : '';
+          if (r.cancelled) {
+            status.textContent = `停止しました: 新規 ${r.added} チャンク (セグメント ${r.segments})${dup}`;
+            toast(root, `停止 (新規 ${r.added} チャンクは保存済み)`, 'warn');
+          } else {
+            status.textContent = `完了: 新規 ${pages.length} ページ / ${r.added} チャンク${dup}。除外 +${newlyExcluded.length} / 再有効化 −${reincluded.length}`;
+            toast(root, `OneNote: 新規 ${r.added} チャンク / 除外 ${newlyExcluded.length} / 再有効化 ${reincluded.length}`, 'ok');
+          }
+        }
+      } catch (e) {
+        if (signal.aborted || (e instanceof Error && e.name === 'AbortError')) {
+          status.textContent = '停止しました';
+        } else {
+          status.textContent = '失敗';
+          toast(root, `OneNote 取り込み失敗: ${e instanceof Error ? e.message : String(e)}`, 'error');
+        }
+      } finally {
+        stopBtn.style.display = 'none'; hideBar();
+      }
+    } else {
+      // 取り込みが無く除外設定だけ変更したケース。
+      status.textContent = `完了: 除外 +${newlyExcluded.length} / 再有効化 −${reincluded.length}`;
+      toast(root, `OneNote: 検索対象を更新 (除外 ${newlyExcluded.length} / 再有効化 ${reincluded.length})`, 'ok');
+    }
+    ac = null; runBtn.disabled = false;
+    renderTree(); // チェック状態を新しい importedIds / excludedIds で再描画
   }
 
   pane.append(loadBtn, treeEl, el('div', { style: 'display:flex;gap:var(--s-3);align-items:center' }, [runBtn, stopBtn]), bar, status);
