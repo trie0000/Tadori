@@ -60,13 +60,24 @@ export async function searchVectors(
   const eng = await getEngine(siteUrl);
   if (eng.db.size === 0) return [];
   const qvec = await embedQueryFor(question, s);
-  // OneNote 除外指定があれば落とす。先に余裕を持って引いてからフィルタする。
   const excluded = getExcludedOneNotePageIds();
-  const pull = excluded.size > 0 ? Math.max(topK * 2, topK + excluded.size) : topK;
-  const hits = eng.db.search(qvec, pull, question, s.ragKeywordWeight)
-    .filter(({ record }) => !(record.kind === 'onenote' && excluded.has(record.conversationId)))
-    .slice(0, topK);
-  return hits.map(({ record, score }) => toHit(record, score));
+  // 多めに引いてから (a) 除外フィルタ (b) 同一 OneNote ページ内のチャンク重複排除 をかける。
+  // 重複排除は OneNote だけに適用 (メールは conversationId=スレッド ID で別メールが同 ID を持つので畳んではいけない)。
+  const pull = Math.max(topK * 3, topK + excluded.size + 20);
+  const raw = eng.db.search(qvec, pull, question, s.ragKeywordWeight)
+    .filter(({ record }) => !(record.kind === 'onenote' && excluded.has(record.conversationId)));
+  const seenPageIds = new Set<string>();
+  const deduped: typeof raw = [];
+  for (const h of raw) {
+    // 同じページから複数チャンクが上位に来た場合、最高スコアの 1 件だけ採用 (LLM へ重複文脈を渡さない)。
+    if (h.record.kind === 'onenote' && h.record.conversationId) {
+      if (seenPageIds.has(h.record.conversationId)) continue;
+      seenPageIds.add(h.record.conversationId);
+    }
+    deduped.push(h);
+    if (deduped.length >= topK) break;
+  }
+  return deduped.map(({ record, score }) => toHit(record, score));
 }
 
 /** 同一スレッド (conversationId) の全メールを時系列で返す (経緯要約用)。 */
