@@ -228,6 +228,51 @@ export async function fetchOneNoteLinks(
   return out;
 }
 
+/** ページ内の「Tadori 追記」Outline (バナー "[Tadori 追記]" を含むもの) 1 件分の情報。 */
+export interface TadoriOutline {
+  outlineId: string;
+  banner: string;
+  heading: string;
+  plainText: string;
+}
+
+/** 指定ページに含まれる Tadori 追記 Outline を列挙 (更新モーダルの一覧用)。 */
+export async function fetchTadoriOutlines(
+  relayBaseUrl: string, pageId: string, signal?: AbortSignal,
+): Promise<TadoriOutline[]> {
+  if (!relayBaseUrl) throw new Error('中継サーバ URL が未設定です');
+  if (!pageId) throw new Error('pageId がありません');
+  const p = new URLSearchParams(); p.set('pageId', pageId);
+  const res = await fetch(`${trim(relayBaseUrl)}/tadori/onenote/tadori-outlines?${p.toString()}`, { method: 'GET', signal });
+  if (!res.ok) {
+    const b = await res.text().catch(() => '');
+    throw new Error(`Tadori 追記一覧取得失敗: HTTP ${res.status} ${b.slice(0, 300)}`);
+  }
+  const j = await res.json() as { outlines?: TadoriOutline[] };
+  return j.outlines ?? [];
+}
+
+/** Tadori 追記 Outline を新しい内容で上書き (Position/Size は維持)。
+ *  バナーが [Tadori 追記] でない Outline は relay 側で 409 で弾く。 */
+export async function replaceTadoriOutline(
+  relayBaseUrl: string,
+  args: { pageId: string; outlineId: string; heading?: string; blocks: AppendBlock[]; user?: string },
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!relayBaseUrl) throw new Error('中継サーバ URL が未設定です');
+  if (!args.pageId || !args.outlineId) throw new Error('pageId と outlineId が必要です');
+  const res = await fetch(`${trim(relayBaseUrl)}/tadori/onenote/replace-outline`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify(args),
+    signal,
+  });
+  if (!res.ok) {
+    const b = await res.text().catch(() => '');
+    throw new Error(`Tadori 追記上書き失敗: HTTP ${res.status} ${b.slice(0, 300)}`);
+  }
+}
+
 /** OneNote のアクティブウィンドウで現在表示中のページ ID を取得。
  *  失敗時 (relay 未起動 / OneNote 未起動 / プロパティ取得不能) は空文字を返す。 */
 export async function fetchCurrentOneNotePageId(relayBaseUrl: string, signal?: AbortSignal): Promise<string> {

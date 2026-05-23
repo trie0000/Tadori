@@ -256,6 +256,25 @@ window.fetch = async (url, opts) => {
     for (const id of ids) { links[id] = `onenote:///mocked/${id}#page-id={${id}}&end`; }
     return jsonResponse({ ok: true, links });
   }
+  if (u.includes('/tadori/onenote/tadori-outlines')) {
+    const params = new URL(u, location.origin).searchParams;
+    const pageId = params.get('pageId') || '';
+    // mock: 2 つの Tadori 追記が p102 にあるとする。他ページは空。
+    if (pageId === 'p102') {
+      return jsonResponse({ ok: true, outlines: [
+        { outlineId: '{out-1}', banner: '[Tadori 追記] by yamada@example.co.jp [2026-05-22 14:30]', heading: 'FAQ: 春の懇親会の詳細', plainText: '[Tadori 追記] by yamada... [2026-05-22 14:30]\nFAQ: 春の懇親会の詳細\n## 春の懇親会\n- 日時: 5月23日(金) 18:30〜\n- 場所: 本社 10F' },
+        { outlineId: '{out-2}', banner: '[Tadori 追記] by tanaka@example.co.jp [2026-05-19 10:00]', heading: 'メモ: VPN設定の手順', plainText: '[Tadori 追記] by tanaka... [2026-05-19 10:00]\nメモ: VPN設定の手順\n1. クライアントをインストール\n2. 接続先を選択' },
+      ]});
+    }
+    return jsonResponse({ ok: true, outlines: [] });
+  }
+  if (u.includes('/tadori/onenote/replace-outline')) {
+    try {
+      const body = opts && opts.body ? JSON.parse(opts.body) : {};
+      console.log('[harness] replace-outline pageId=', body.pageId, 'outlineId=', body.outlineId, 'heading=', body.heading, 'blocks=', (body.blocks||[]).length);
+    } catch (e) { console.warn('[harness] replace-outline bad body', e); }
+    return jsonResponse({ ok: true });
+  }
   if (u.includes('/tadori/onenote/append')) {
     try {
       const body = opts && opts.body ? JSON.parse(opts.body) : {};

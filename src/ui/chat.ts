@@ -14,7 +14,7 @@ import { loadSettings, saveSettings, CORP_AI_MODELS, CLAUDE_MODELS } from '../ap
 import { isDeveloperMode } from '../utils/devMode';
 import { renderMarkdown } from '../lib/markdown';
 import { openMailInOutlook } from '../outlook/import';
-import { openOneNotePage, appendOneNotePage, markdownToBlocks, fetchCurrentOneNotePageId, fetchOneNoteLinks, fetchOneNoteHierarchy } from '../onenote/import';
+import { openOneNotePage, appendOneNotePage, markdownToBlocks, fetchCurrentOneNotePageId, fetchOneNoteLinks, fetchOneNoteHierarchy, fetchTadoriOutlines, replaceTadoriOutline, type TadoriOutline } from '../onenote/import';
 import { currentUser } from '../usage/tracker';
 import { getEngine } from '../db/engine';
 import { getExcludedOneNotePageIds } from '../onenote/exclude';
@@ -575,11 +575,116 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
       })();
     }
 
-    // pageSelect 切替で新規ページ入力欄の表示を切る。
-    const refreshNewPageBlock = (): void => {
-      newPageBlock.style.display = pageSelect.value === NEW_PAGE_SENTINEL ? '' : 'none';
+    // ─── 更新モード用の UI: 既存の Tadori 追記 Outline を選んで上書きする ───
+    let mode: 'append' | 'update' = 'append';
+    const outlineSelect = el('select', { class: 'tdr-input' }) as HTMLSelectElement;
+    const outlineStatus = el('p', { class: 'tdr-hint', style: 'margin-top:var(--s-1)' }, ['Tadori が追記した Outline を一覧から選んでください。']);
+    const currentContentPane = el('div', { class: 'tdr-onenote-preview', style: 'border:1px solid var(--line);border-radius:var(--r-2);padding:var(--s-4);background:var(--paper-2);min-height:120px;max-height:200px;overflow:auto;font-size:var(--fs-sm);line-height:1.7;white-space:pre-wrap' });
+    const updateBlock = el('div', { style: 'display:none;border-left:3px solid var(--accent-strong);padding:var(--s-3) var(--s-4);background:var(--accent-soft);border-radius:var(--r-2);margin-top:var(--s-2)' }, [
+      el('div', { style: 'margin-bottom:var(--s-3)' }, [
+        el('label', { class: 'tdr-label' }, ['更新する Tadori 追記 Outline']),
+        outlineSelect,
+        outlineStatus,
+      ]),
+      el('div', {}, [
+        el('label', { class: 'tdr-label' }, ['現在 OneNote に書かれている内容']),
+        currentContentPane,
+      ]),
+    ]);
+
+    let currentOutlines: TadoriOutline[] = [];
+    // 選択中ページの Tadori 追記 Outline 一覧を取得して outlineSelect に流し込む。
+    async function reloadOutlinesForPage(): Promise<void> {
+      const pageId = pageSelect.value;
+      outlineSelect.replaceChildren();
+      currentContentPane.textContent = '';
+      currentOutlines = [];
+      if (!pageId || pageId === NEW_PAGE_SENTINEL) {
+        outlineStatus.textContent = '既存ページを選択してください。';
+        return;
+      }
+      outlineStatus.textContent = '読み込み中…';
+      try {
+        const list = await fetchTadoriOutlines(relayBaseUrl, pageId);
+        currentOutlines = list;
+        if (list.length === 0) {
+          outlineStatus.textContent = 'このページに Tadori 追記はまだありません。';
+          return;
+        }
+        list.forEach((o, i) => {
+          const label = `${o.heading || '(見出しなし)'}  —  ${o.banner.slice(0, 80)}`;
+          const opt = el('option', { value: String(i) }, [label]) as HTMLOptionElement;
+          outlineSelect.appendChild(opt);
+        });
+        outlineStatus.textContent = `${list.length} 件の Tadori 追記が見つかりました。`;
+        applySelectedOutlineToEditor();
+      } catch (e) {
+        outlineStatus.textContent = `取得失敗: ${e instanceof Error ? e.message : String(e)}`;
+      }
+    }
+    // outlineSelect の選択を見て、編集エリア (heading / body) と「現在内容」プレビューを更新する。
+    function applySelectedOutlineToEditor(): void {
+      const idx = Number(outlineSelect.value);
+      const sel = currentOutlines[idx];
+      if (!sel) return;
+      currentContentPane.textContent = sel.plainText;
+      headingInput.value = sel.heading;
+      // plainText は banner + heading + body が全部混ざっているので、それらを除いた本文を推定。
+      const lines = sel.plainText.split('\n');
+      const bodyOnly = lines.filter(line => !/\[Tadori 追記\]/.test(line) && line.trim() !== sel.heading.trim()).join('\n');
+      bodyArea.value = bodyOnly.trim();
+      renderPreview();
+    }
+    outlineSelect.addEventListener('change', applySelectedOutlineToEditor);
+
+    // モード切替トグル
+    const modeToggle = el('div', { style: 'display:flex;gap:var(--s-4);padding:var(--s-3) var(--s-4);background:var(--paper-2);border-radius:var(--r-2);border:1px solid var(--line)' });
+    const mkModeRadio = (val: 'append' | 'update', label: string, desc: string): HTMLElement => {
+      const radio = el('input', { type: 'radio', name: 'tdr-append-mode', value: val, style: 'margin-right:var(--s-2)' }) as HTMLInputElement;
+      if (val === mode) radio.checked = true;
+      const lbl = el('label', { style: 'display:flex;align-items:center;gap:var(--s-2);cursor:pointer;flex:1' }, [
+        radio,
+        el('div', {}, [
+          el('div', { style: 'font-weight:600' }, [label]),
+          el('div', { class: 'tdr-hint', style: 'margin:0' }, [desc]),
+        ]),
+      ]);
+      radio.addEventListener('change', () => {
+        if (radio.checked) { mode = val; applyMode(); }
+      });
+      return lbl;
     };
-    pageSelect.addEventListener('change', refreshNewPageBlock);
+    modeToggle.append(
+      mkModeRadio('append', '新規追記 / 新規ページ作成', '回答内容をそのまま追記。新規ページも作れます。'),
+      mkModeRadio('update', '既存の Tadori 追記を更新', '過去に Tadori が追加したブロックを上書き (手書きは触らない)。'),
+    );
+
+    function applyMode(): void {
+      if (mode === 'append') {
+        updateBlock.style.display = 'none';
+        newPageOpt.disabled = false;
+        // pageSelect の値がそのまま使える状態に
+        refreshNewPageBlock();
+        confirmBtn.textContent = 'OneNote に追記';
+      } else {
+        // update モード: 新規ページオプションを無効化、新規ページ block を必ず隠す
+        newPageBlock.style.display = 'none';
+        newPageOpt.disabled = true;
+        if (pageSelect.value === NEW_PAGE_SENTINEL) pageSelect.value = pages[0]?.pageId ?? '';
+        updateBlock.style.display = '';
+        void reloadOutlinesForPage();
+        confirmBtn.textContent = '更新で上書き';
+      }
+    }
+
+    // pageSelect 切替で新規ページ入力欄の表示を切る (append モード時) / 更新モードなら Outline 一覧を再読込。
+    const refreshNewPageBlock = (): void => {
+      newPageBlock.style.display = (mode === 'append' && pageSelect.value === NEW_PAGE_SENTINEL) ? '' : 'none';
+    };
+    pageSelect.addEventListener('change', () => {
+      refreshNewPageBlock();
+      if (mode === 'update') void reloadOutlinesForPage();
+    });
     refreshNewPageBlock();
 
     const opUser = currentUser();
@@ -601,10 +706,12 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     renderPreview();
 
     const body = el('div', { class: 'tdr-modal-body', style: 'display:flex;flex-direction:column;gap:var(--s-4)' }, [
+      modeToggle,
       el('div', {}, [
         el('label', { class: 'tdr-label' }, ['追記先ページ']), pageSelect,
         currentHint,
         newPageBlock,
+        updateBlock,
       ]),
       el('div', {}, [
         el('label', { class: 'tdr-label' }, ['見出し']), headingInput,
@@ -626,32 +733,43 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     const handle = openModal({ root, title: 'OneNote に追記', body, footer, large: true });
     cancelBtn.addEventListener('click', () => handle.close());
     confirmBtn.addEventListener('click', async () => {
-      const selected = pageSelect.value;
       const heading = headingInput.value.trim();
       const blocks = markdownToBlocks(bodyArea.value);
       if (!heading && blocks.length === 0) { toast(root, '見出しまたは本文を入力してください', 'warn'); return; }
-      const args: Parameters<typeof appendOneNotePage>[1] = { heading, blocks, user: opUser };
-      if (selected === NEW_PAGE_SENTINEL) {
-        const sectionId = sectionSelect.value;
-        const newTitle = titleInput.value.trim();
-        if (!sectionId) { toast(root, '保存先セクションを選択してください', 'warn'); return; }
-        if (!newTitle) { toast(root, '新規ページタイトルを入力してください', 'warn'); titleInput.focus(); return; }
-        args.createInSection = sectionId;
-        args.newPageTitle = newTitle;
-      } else {
-        args.pageId = selected;
-      }
+      const origText = confirmBtn.textContent;
       confirmBtn.disabled = true; cancelBtn.disabled = true;
-      confirmBtn.textContent = '追記中…';
+      confirmBtn.textContent = mode === 'update' ? '更新中…' : '追記中…';
       try {
-        const res = await appendOneNotePage(relayBaseUrl, args);
-        toast(root, args.createInSection ? `OneNote に新規ページを作成して追記しました` : 'OneNote に追記しました', 'ok');
-        handle.close();
-        void res; // pageId は今のところ未使用 (将来「作ったページを開く」等に使える)
+        if (mode === 'update') {
+          const pageId = pageSelect.value;
+          const idx = Number(outlineSelect.value);
+          const sel = currentOutlines[idx];
+          if (!pageId || !sel) { toast(root, '更新する Outline を選択してください', 'warn'); throw new Error('skip'); }
+          await replaceTadoriOutline(relayBaseUrl, { pageId, outlineId: sel.outlineId, heading, blocks, user: opUser });
+          toast(root, 'OneNote の Tadori 追記を更新しました', 'ok');
+          handle.close();
+        } else {
+          const selected = pageSelect.value;
+          const args: Parameters<typeof appendOneNotePage>[1] = { heading, blocks, user: opUser };
+          if (selected === NEW_PAGE_SENTINEL) {
+            const sectionId = sectionSelect.value;
+            const newTitle = titleInput.value.trim();
+            if (!sectionId) { toast(root, '保存先セクションを選択してください', 'warn'); throw new Error('skip'); }
+            if (!newTitle) { toast(root, '新規ページタイトルを入力してください', 'warn'); titleInput.focus(); throw new Error('skip'); }
+            args.createInSection = sectionId;
+            args.newPageTitle = newTitle;
+          } else {
+            args.pageId = selected;
+          }
+          await appendOneNotePage(relayBaseUrl, args);
+          toast(root, args.createInSection ? 'OneNote に新規ページを作成して追記しました' : 'OneNote に追記しました', 'ok');
+          handle.close();
+        }
       } catch (e) {
-        toast(root, `追記失敗: ${e instanceof Error ? e.message : String(e)}`, 'error');
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg !== 'skip') toast(root, `失敗: ${msg}`, 'error');
         confirmBtn.disabled = false; cancelBtn.disabled = false;
-        confirmBtn.textContent = 'OneNote に追記';
+        confirmBtn.textContent = origText ?? 'OneNote に追記';
       }
     });
   }
