@@ -20,6 +20,7 @@ import {
 import { embedQueryFor } from '../embeddings/router';
 import { seedTestData, SAMPLE_MAILS } from '../dev/seed';
 import { fetchOutlookMails, toIngestMails } from '../outlook/import';
+import { fetchOneNoteHierarchy, fetchOneNotePages, pagesToIngestMails, type OneNoteNotebook } from '../onenote/import';
 import { ingestToSegments } from '../db/writer';
 import { getEngine, wipeImportedMails } from '../db/engine';
 import { getFontSize, setFontSize } from '../utils/fontSize';
@@ -347,6 +348,7 @@ function buildIngestPane(pane: HTMLElement, draft: RuntimeSettings, root: HTMLEl
 
   // ── Outlook からの既存メールインポート ──
   buildOutlookImport(pane, draft, root, siteUrl);
+  buildOneNoteImport(pane, draft, root, siteUrl);
 }
 
 function buildOutlookImport(pane: HTMLElement, draft: RuntimeSettings, root: HTMLElement, siteUrl: string): void {
@@ -476,6 +478,144 @@ function buildOutlookImport(pane: HTMLElement, draft: RuntimeSettings, root: HTM
   });
 
   pane.append(btn, bar, status);
+}
+
+/** OneNote 取り込み: 階層ツリーから選択 → ページ群を chunk 化して投入。 */
+function buildOneNoteImport(pane: HTMLElement, draft: RuntimeSettings, root: HTMLElement, siteUrl: string): void {
+  pane.appendChild(el('p', { class: 'tdr-pane-title', style: 'margin-top:var(--s-8)' }, ['OneNote から取り込み']));
+  pane.appendChild(el('p', { class: 'tdr-hint', style: 'margin:0 0 var(--s-4)' }, [
+    'OneNote の指定ノートブック/セクション配下のページを取り込みます (relay 経由で COM 抽出 → 自動チャンク分割)。Windows + OneNote 起動が必要。',
+  ]));
+
+  const loadBtn  = el('button', { class: 'tdr-btn' }, [el('span', { html: icons.notebook(14) }), 'ノートブック一覧を取得']);
+  const treeEl   = el('div', { class: 'tdr-onenote-tree', style: 'max-height:280px;overflow:auto;border:1px solid var(--line);border-radius:var(--r-2);padding:var(--s-4);margin-top:var(--s-3);display:none;' });
+  const runBtn   = el('button', { class: 'tdr-btn tdr-btn--primary', style: 'margin-top:var(--s-4);display:none' }, ['選択範囲を取り込む']);
+  const stopBtn  = el('button', { class: 'tdr-btn', style: 'margin-top:var(--s-4);display:none' }, ['停止']);
+  const status   = el('div', { style: 'font-size:var(--fs-sm);color:var(--ink-3);margin-top:var(--s-3)' }, ['']);
+  const barFill  = el('div', { class: 'tdr-progress-fill' });
+  const bar      = el('div', { class: 'tdr-progress', style: 'display:none' }, [barFill]);
+
+  const showBar = (pct: number): void => { bar.style.display = ''; barFill.style.width = `${pct}%`; };
+  const hideBar = (): void => { bar.style.display = 'none'; barFill.style.width = '0%'; };
+
+  let notebooks: OneNoteNotebook[] = [];
+  let ac: AbortController | null = null;
+
+  function selectedPageIds(): string[] {
+    const ids: string[] = [];
+    treeEl.querySelectorAll<HTMLInputElement>('input[data-pid]:checked').forEach(cb => ids.push(cb.dataset.pid!));
+    return ids;
+  }
+
+  function renderTree(): void {
+    treeEl.replaceChildren();
+    if (notebooks.length === 0) { treeEl.appendChild(el('div', { class: 'tdr-hint' }, ['ノートブックが見つかりませんでした。'])); return; }
+    for (const nb of notebooks) {
+      const secList = el('div', { style: 'margin-left:var(--s-5)' });
+      const nbCb = el('input', { type: 'checkbox' }) as HTMLInputElement;
+      nbCb.addEventListener('change', () => {
+        secList.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach(cb => { cb.checked = nbCb.checked; });
+      });
+      const nbRow = el('label', { style: 'display:flex;align-items:center;gap:var(--s-2);cursor:pointer;font-weight:600;margin-top:var(--s-2)' }, [
+        nbCb, el('span', { html: icons.notebook(14), style: 'display:inline-flex;color:var(--ink-3)' }), el('span', {}, [nb.name]),
+      ]);
+      treeEl.appendChild(nbRow);
+      for (const sec of nb.sections) {
+        const pageList = el('div', { style: 'margin-left:var(--s-5)' });
+        const secCb = el('input', { type: 'checkbox' }) as HTMLInputElement;
+        secCb.addEventListener('change', () => {
+          pageList.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach(cb => { cb.checked = secCb.checked; });
+        });
+        const secRow = el('label', { style: 'display:flex;align-items:center;gap:var(--s-2);cursor:pointer;margin-top:var(--s-1)' }, [
+          secCb, el('span', { html: icons.folder(14), style: 'display:inline-flex;color:var(--ink-3)' }), el('span', {}, [sec.name + ` (${sec.pages.length})`]),
+        ]);
+        secList.appendChild(secRow);
+        for (const pg of sec.pages) {
+          const pgCb = el('input', { type: 'checkbox', 'data-pid': pg.id }) as HTMLInputElement;
+          const pgRow = el('label', { style: 'display:flex;align-items:center;gap:var(--s-2);cursor:pointer;font-size:var(--fs-sm);color:var(--ink-3)' }, [
+            pgCb, el('span', {}, [pg.name]),
+          ]);
+          pageList.appendChild(pgRow);
+        }
+        secList.appendChild(pageList);
+      }
+      treeEl.appendChild(secList);
+    }
+  }
+
+  loadBtn.addEventListener('click', () => {
+    void (async () => {
+      loadBtn.disabled = true; status.textContent = 'OneNote の階層を取得中…';
+      try {
+        notebooks = await fetchOneNoteHierarchy(draft.relayBaseUrl);
+        const total = notebooks.reduce((n, nb) => n + nb.sections.reduce((m, s) => m + s.pages.length, 0), 0);
+        status.textContent = `${notebooks.length} ノートブック / ${total} ページが見つかりました。取り込み対象にチェックを入れてください。`;
+        treeEl.style.display = ''; runBtn.style.display = '';
+        renderTree();
+      } catch (e) {
+        status.textContent = `失敗: ${e instanceof Error ? e.message : String(e)}`;
+      } finally { loadBtn.disabled = false; }
+    })();
+  });
+
+  runBtn.addEventListener('click', () => {
+    const ids = selectedPageIds();
+    if (ids.length === 0) { toast(root, '取り込むページを選択してください', 'warn'); return; }
+    confirmModal({
+      root, title: 'OneNote 取り込み確認', primaryLabel: '取り込む',
+      message: `選択された ${ids.length} ページを取り込みます。長文ページは自動でチャンク分割されます。`,
+      onConfirm: () => { void doImport(ids); },
+    });
+  });
+
+  stopBtn.addEventListener('click', () => { ac?.abort(); stopBtn.textContent = '停止中…'; });
+
+  async function doImport(pageIds: string[]): Promise<void> {
+    ac = new AbortController();
+    const signal = ac.signal;
+    runBtn.disabled = true; stopBtn.style.display = ''; stopBtn.textContent = '停止';
+    status.textContent = 'ページ本文を取得中…';
+    hideBar();
+    try {
+      const pages = await fetchOneNotePages(draft.relayBaseUrl, { ids: pageIds, max: 1000 }, signal);
+      if (pages.length === 0) { status.textContent = '取得できたページがありませんでした'; return; }
+      const mails = pagesToIngestMails(pages);
+      status.textContent = `${pages.length} ページ → ${mails.length} チャンク。埋め込みを開始…`;
+      let embedded = 0, saved = 0;
+      const r = await ingestToSegments(mails, draft, siteUrl, (phase, done, total) => {
+        if (phase === 'sync') { status.textContent = '準備中…'; return; }
+        if (phase === 'embed') embedded = done;
+        if (phase === 'upload') saved = done;
+        const units = (total || mails.length) * 2 || 1;
+        const pct = Math.min(100, Math.round((embedded + saved) / units * 100));
+        showBar(pct);
+        status.textContent = `埋め込み ${embedded}/${total} ・ 保存 ${saved}/${total} チャンク (${pct}%)`;
+      }, signal);
+      hideBar();
+      const dup = r.skipped ? ` / 重複スキップ ${r.skipped}` : '';
+      if (r.cancelled) {
+        status.textContent = `停止しました: 保存済み 新規 ${r.added} チャンク (セグメント ${r.segments})${dup}`;
+        toast(root, `停止 (新規 ${r.added} チャンクは保存済み)`, 'warn');
+      } else if (r.added === 0) {
+        status.textContent = `すべて登録済みでした (${mails.length} チャンク / 新規 0)`;
+        toast(root, '新規なし (登録済み)', 'warn');
+      } else {
+        status.textContent = `完了: ${pages.length} ページ / 新規 ${r.added} チャンク (セグメント ${r.segments})${dup}`;
+        toast(root, `OneNote から ${r.added} チャンク取り込みました`, 'ok');
+      }
+    } catch (e) {
+      if (signal.aborted || (e instanceof Error && e.name === 'AbortError')) {
+        status.textContent = '停止しました';
+      } else {
+        status.textContent = '失敗';
+        toast(root, `OneNote 取り込み失敗: ${e instanceof Error ? e.message : String(e)}`, 'error');
+      }
+    } finally {
+      ac = null; runBtn.disabled = false; stopBtn.style.display = 'none'; hideBar();
+    }
+  }
+
+  pane.append(loadBtn, treeEl, el('div', { style: 'display:flex;gap:var(--s-3);align-items:center' }, [runBtn, stopBtn]), bar, status);
 }
 
 // ─── 表示 ─────────────────────────────────────────────────────────────────────

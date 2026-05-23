@@ -33,6 +33,10 @@ export interface MailRecord {
   messageId: string;
   internetMessageId: string;
   conversationId: string;
+  kind: 'mail' | 'onenote' | 'doc';
+  chunkIdx?: number;
+  chunkCount?: number;
+  docPath?: string;
   subject: string;
   from: string;
   to: string[];
@@ -76,6 +80,10 @@ export class VectorDb {
         messageId: r.messageId,
         internetMessageId: r.internetMessageId ?? '',
         conversationId: r.conversationId ?? '',
+        kind: r.kind ?? 'mail',
+        chunkIdx: r.chunkIdx,
+        chunkCount: r.chunkCount,
+        docPath: r.docPath,
         subject: r.subject ?? '(件名なし)',
         from: r.from ?? '',
         to: r.to ?? [],

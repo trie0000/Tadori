@@ -193,6 +193,9 @@ Write-Host 'エンドポイント:'
 Write-Host "  GET  $baseUrlShort/tadori/health           (死活確認)"
 Write-Host "  GET  $baseUrlShort/tadori/outlook/import   (Outlook からメール読込: ?to=&cc=&since=&until=&max=)"
 Write-Host "  GET  $baseUrlShort/tadori/outlook/open     (Internet-Message-Id でメール表示: ?id=)"
+Write-Host "  GET  $baseUrlShort/tadori/onenote/hierarchy (OneNote ノートブック/セクション/ページ階層を取得)"
+Write-Host "  GET  $baseUrlShort/tadori/onenote/pages     (OneNote 指定ページの本文抽出: ?ids=&since=&max=)"
+Write-Host "  GET  $baseUrlShort/tadori/onenote/open      (OneNote 上でページ表示: ?id=)"
 Write-Host "  GET  $baseUrlShort/tadori/tadori.bundle.js (開発: ローカル dist のバンドル配信)"
 Write-Host "  GET  $baseUrlShort/tadori/version.txt      (開発: ローカル dist のバージョン配信)"
 Write-Host "  $baseUrlShort/tadori/bundle-dir            (開発: 配信フォルダの確認 GET / 変更 POST)"
@@ -522,6 +525,164 @@ function Invoke-OutlookOpen {
     }
 }
 
+# ─── OneNote COM (ノートブック/セクション/ページ取り込み) ───────────────────
+# 階層列挙 → 選択ページ群の本文抽出 → 既定アプリでページを開く。
+# 必要環境: Windows + OneNote デスクトップ。Outlook と同じく COM 経由。
+
+function Get-OneNoteOrNull {
+    try {
+        try { return [Runtime.InteropServices.Marshal]::GetActiveObject('OneNote.Application') }
+        catch { return (New-Object -ComObject OneNote.Application) }
+    } catch { return $null }
+}
+
+# OneNote XML から階層 JSON (ブラウザでツリー表示する用) を構築。
+function Invoke-OneNoteHierarchy {
+    param([System.Net.HttpListenerContext]$Context)
+    $response = $Context.Response
+    $one = Get-OneNoteOrNull
+    if (-not $one) {
+        Send-Error -Response $response -Status 503 -Code 'no_onenote' -Detail 'OneNote を起動/接続できませんでした (Windows + OneNote が必要)'
+        return
+    }
+    try {
+        $xml = ''
+        # 4 = hsPages: ノートブック → セクション → ページ まで取得。
+        $one.GetHierarchy('', 4, [ref]$xml)
+        [xml]$doc = $xml
+        $notebooks = New-Object System.Collections.ArrayList
+        foreach ($nb in $doc.SelectNodes('//*[local-name()="Notebook"]')) {
+            $sectionsList = New-Object System.Collections.ArrayList
+            foreach ($sec in $nb.SelectNodes('descendant::*[local-name()="Section"]')) {
+                $pagesList = New-Object System.Collections.ArrayList
+                foreach ($pg in $sec.SelectNodes('*[local-name()="Page"]')) {
+                    [void]$pagesList.Add(@{
+                        id = [string]$pg.ID
+                        name = [string]$pg.name
+                        lastModified = [string]$pg.lastModifiedTime
+                        level = [int]($pg.pageLevel ? $pg.pageLevel : 1)
+                    })
+                }
+                [void]$sectionsList.Add(@{
+                    id = [string]$sec.ID
+                    name = [string]$sec.name
+                    pages = @($pagesList)
+                })
+            }
+            [void]$notebooks.Add(@{
+                id = [string]$nb.ID
+                name = [string]$nb.name
+                sections = @($sectionsList)
+            })
+        }
+        Send-Json -Response $response -Status 200 -Body @{ ok = $true; notebooks = @($notebooks) }
+    }
+    catch {
+        Send-Error -Response $response -Status 500 -Code 'onenote_error' -Detail $_.Exception.Message
+    }
+}
+
+# クエリ:
+#   ?ids=<pageId>;<pageId>;...        対象ページ ID (URL エンコード推奨)
+#   ?since=YYYY-MM-DD                 lastModified がこれ以降のもののみ
+#   ?max=200                          上限件数
+# 戻り値: ページ配列 { pageId, notebook, section, title, lastModified, body }
+function Invoke-OneNotePages {
+    param([System.Net.HttpListenerContext]$Context)
+    $response = $Context.Response
+    $q = $Context.Request.QueryString
+    $ids = @()
+    if ($q['ids']) { $ids = ($q['ids'] -split ';') | ForEach-Object { $_.Trim() } | Where-Object { $_ } }
+    $max = 500
+    if ($q['max']) { $tmp = 0; if ([int]::TryParse($q['max'], [ref]$tmp)) { $max = $tmp } }
+    $since = $null
+    if ($q['since']) { try { $since = [DateTime]::Parse($q['since']) } catch { } }
+
+    $one = Get-OneNoteOrNull
+    if (-not $one) {
+        Send-Error -Response $response -Status 503 -Code 'no_onenote' -Detail 'OneNote を起動/接続できませんでした (Windows + OneNote が必要)'
+        return
+    }
+    try {
+        $hierXml = ''
+        $one.GetHierarchy('', 4, [ref]$hierXml)
+        [xml]$hier = $hierXml
+        $allPages = $hier.SelectNodes('//*[local-name()="Page"]')
+
+        # 対象ページを絞る (ids 指定があればそれだけ。無ければ全部)。
+        $targets = New-Object System.Collections.ArrayList
+        foreach ($pg in $allPages) {
+            if ($ids.Count -gt 0 -and ($ids -notcontains [string]$pg.ID)) { continue }
+            if ($since) {
+                $lm = $null
+                try { $lm = [DateTime]::Parse([string]$pg.lastModifiedTime) } catch { }
+                if ($lm -and $lm -lt $since) { continue }
+            }
+            [void]$targets.Add($pg)
+            if ($targets.Count -ge $max) { break }
+        }
+
+        $results = New-Object System.Collections.ArrayList
+        foreach ($pg in $targets) {
+            $section = $pg.ParentNode
+            $notebook = $section.ParentNode
+            while ($notebook -and ($notebook.LocalName -ne 'Notebook')) { $notebook = $notebook.ParentNode }
+            $content = ''
+            try { $one.GetPageContent([string]$pg.ID, [ref]$content) } catch { continue }
+            $text = ''
+            try {
+                [xml]$cdoc = $content
+                $tNodes = $cdoc.SelectNodes('//*[local-name()="T"]')
+                $parts = @()
+                foreach ($t in $tNodes) {
+                    $raw = [string]$t.InnerText
+                    if ($raw) { $parts += $raw }
+                }
+                # 文字参照や軽い HTML タグを落として可読テキストに。
+                $text = ($parts -join "`n") -replace '&nbsp;', ' ' -replace '<[^>]+>', ''
+            } catch { }
+            [void]$results.Add(@{
+                pageId       = [string]$pg.ID
+                title        = [string]$pg.name
+                lastModified = [string]$pg.lastModifiedTime
+                notebook     = if ($notebook) { [string]$notebook.name } else { '' }
+                section      = [string]$section.name
+                body         = $text
+            })
+        }
+
+        Write-Host ("[onenote] returned {0} pages (ids:{1} since:{2})" -f $results.Count, $ids.Count, ($since ? $since.ToString('yyyy-MM-dd') : ''))
+        Send-Json -Response $response -Status 200 -Body @{ ok = $true; count = $results.Count; pages = @($results) }
+    }
+    catch {
+        Send-Error -Response $response -Status 500 -Code 'onenote_error' -Detail $_.Exception.Message
+    }
+}
+
+# 指定 pageId のページを OneNote 上で表示。
+function Invoke-OneNoteOpen {
+    param([System.Net.HttpListenerContext]$Context)
+    $response = $Context.Response
+    $id = $Context.Request.QueryString['id']
+    if (-not $id) {
+        Send-Error -Response $response -Status 400 -Code 'bad_request' -Detail 'クエリ id (pageId) が必要です'
+        return
+    }
+    $one = Get-OneNoteOrNull
+    if (-not $one) {
+        Send-Error -Response $response -Status 503 -Code 'no_onenote' -Detail 'OneNote を起動/接続できませんでした'
+        return
+    }
+    try {
+        $one.NavigateTo($id, $null, $false)
+        Write-Host ("[onenote] navigated to page id={0}" -f $id)
+        Send-Json -Response $response -Status 200 -Body @{ ok = $true }
+    }
+    catch {
+        Send-Error -Response $response -Status 500 -Code 'onenote_error' -Detail $_.Exception.Message
+    }
+}
+
 # ─── Request handler ────────────────────────────────────────────────────────
 
 function Invoke-RelayRequest {
@@ -559,6 +720,11 @@ function Invoke-RelayRequest {
         Invoke-OutlookOpen -Context $Context
         return
     }
+
+    # ── ローカル機能: OneNote 取り込み (階層取得 / ページ抽出 / 開く) ──
+    if ($path -eq '/tadori/onenote/hierarchy') { Invoke-OneNoteHierarchy -Context $Context; return }
+    if ($path -eq '/tadori/onenote/pages')     { Invoke-OneNotePages     -Context $Context; return }
+    if ($path -eq '/tadori/onenote/open')      { Invoke-OneNoteOpen      -Context $Context; return }
 
     # ── 開発者モード: ローカル dist のバンドル配信 (loader が読む) ──
     if ($path -eq '/tadori/tadori.bundle.js') {

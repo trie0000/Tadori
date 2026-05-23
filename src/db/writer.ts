@@ -22,8 +22,13 @@ export interface IngestMail {
   messageId: string;
   /** RFC2822 Internet-Message-Id (Outlook での再検索キー)。 */
   internetMessageId?: string;
-  /** スレッド識別子 (Outlook ConversationID)。 */
+  /** スレッド識別子 (Outlook ConversationID) または OneNote ページID 等の親ドキュメントID。 */
   conversationId?: string;
+  /** ソース種別。省略時は 'mail'。 */
+  kind?: 'mail' | 'onenote' | 'doc';
+  chunkIdx?: number;
+  chunkCount?: number;
+  docPath?: string;
   subject: string;
   from: string;
   to: string[];
@@ -130,6 +135,10 @@ export async function ingestToSegments(
       messageId: m.messageId,
       internetMessageId: m.internetMessageId,
       conversationId: m.conversationId,
+      kind: m.kind,
+      chunkIdx: m.chunkIdx,
+      chunkCount: m.chunkCount,
+      docPath: m.docPath,
       subject: m.subject,
       from: m.from,
       to: m.to,

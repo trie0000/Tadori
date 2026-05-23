@@ -176,6 +176,52 @@ window.fetch = async (url, opts) => {
     console.log('[harness] outlook/open id=', id);
     return jsonResponse({ ok: true, found: true });
   }
+  // OneNote 階層 (relay) をモック
+  if (u.includes('/tadori/onenote/hierarchy')) {
+    await new Promise(r => setTimeout(r, 120));
+    return jsonResponse({ ok: true, notebooks: [
+      { id: 'nb1', name: '業務メモ', sections: [
+        { id: 's1', name: '会議録', pages: [
+          { id: 'p101', name: '2026Q1 キックオフ', lastModified: '2026-02-15T10:00:00Z' },
+          { id: 'p102', name: 'A プロジェクト 進捗確認', lastModified: '2026-04-10T11:30:00Z' },
+        ]},
+        { id: 's2', name: '個人ノート', pages: [
+          { id: 'p103', name: 'リサーチメモ', lastModified: '2026-05-01T09:00:00Z' },
+        ]},
+      ]},
+      { id: 'nb2', name: 'ナレッジ', sections: [
+        { id: 's3', name: '手順書', pages: [
+          { id: 'p201', name: 'OneNote 取り込み手順', lastModified: '2026-05-20T15:00:00Z' },
+        ]},
+      ]},
+    ]});
+  }
+  // OneNote ページ本文 (relay) をモック
+  if (u.includes('/tadori/onenote/pages')) {
+    await new Promise(r => setTimeout(r, 200));
+    const params = new URL(u, location.origin).searchParams;
+    const ids = (params.get('ids') || '').split(';').filter(Boolean);
+    const SAMPLE = {
+      p101: { title: '2026Q1 キックオフ', notebook: '業務メモ', section: '会議録',
+        body: '# キックオフ会議\n\n2026 年 Q1 のキックオフ会議を実施しました。主要テーマは AI 活用と業務効率化です。\n\n## 議題\n- 部門横断の AI 活用ワーキンググループ発足\n- 既存ツールのリプレース計画\n- 教育プログラムの整備\n\n## 決定事項\nワーキンググループのリーダーは情報企画部の山田が担当します。隔週で進捗共有を行います。' },
+      p102: { title: 'A プロジェクト 進捗確認', notebook: '業務メモ', section: '会議録',
+        body: '# A プロジェクト 進捗\n\n機能開発はほぼ予定通り。\n\n## 課題\n- データ移行のリハーサル未実施\n- 受入テストの体制が固まっていない\n\n来週までに体制を確定する。' },
+      p103: { title: 'リサーチメモ', notebook: '業務メモ', section: '個人ノート',
+        body: '## 競合調査\nCopilot / Glean / Notion AI などのプロダクトは社内文書のベクトル化 + 出典付き回答が中核。\n\n社内ローカルで実現するには、ベクトル DB + 埋め込みモデルの選定が要となる。' },
+      p201: { title: 'OneNote 取り込み手順', notebook: 'ナレッジ', section: '手順書',
+        body: '## 手順\n1. relay (PowerShell) を起動する。\n2. Tadori 設定 → 取り込み → 「ノートブック一覧を取得」を押す。\n3. 取り込みたいノートブック/セクション/ページを選択する。\n4. 「選択範囲を取り込む」を押す。\n\n長文ページは自動でチャンク分割されます。' },
+    };
+    const pages = (ids.length ? ids : Object.keys(SAMPLE)).map(pid => SAMPLE[pid] ? ({
+      pageId: pid, title: SAMPLE[pid].title, notebook: SAMPLE[pid].notebook, section: SAMPLE[pid].section,
+      lastModified: '2026-05-01T09:00:00Z', body: SAMPLE[pid].body,
+    }) : null).filter(Boolean);
+    return jsonResponse({ ok: true, pages });
+  }
+  if (u.includes('/tadori/onenote/open')) {
+    const id = new URL(u, location.origin).searchParams.get('id');
+    console.log('[harness] onenote/open id=', id);
+    return jsonResponse({ ok: true });
+  }
 
   // ベクトルDB セグメント (新方式) — ステートフルな疑似ファイルストア
   // (PUT で保存・GET で返す)。最初は空 → 投入で manifest/seg が作られる。

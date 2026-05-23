@@ -14,6 +14,7 @@ import { loadSettings, saveSettings, CORP_AI_MODELS, CLAUDE_MODELS } from '../ap
 import { isDeveloperMode } from '../utils/devMode';
 import { renderMarkdown } from '../lib/markdown';
 import { openMailInOutlook } from '../outlook/import';
+import { openOneNotePage } from '../onenote/import';
 import { confirmModal } from './modal';
 import {
   listSessions, getSession, appendTurn, setTitle, deleteSession, newSessionId,
@@ -558,15 +559,19 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
 
   /** 出典カード 1 件を生成 (n は引用番号 = hits 内の元インデックス+1)。 */
   function renderHitCard(h: SavedHit, n: number, relayBaseUrl: string, query: string): HTMLElement {
+    const kind = h.kind || 'mail';
     const plain = h.isHtml ? htmlToText(h.body) : h.body;
-    const hitEl = el('div', { class: 'tdr-hit' });
+    const hitEl = el('div', { class: `tdr-hit tdr-hit--${kind}` });
     hitEl.dataset.n = String(n); // [n] クリックでの引き当て用
+    const badgeIcon = kind === 'onenote' ? icons.notebook(12) : kind === 'doc' ? icons.folder(12) : icons.message(12);
+    const badgeLabel = kind === 'onenote' ? 'OneNote' : kind === 'doc' ? '文書' : 'メール';
     const head = el('div', { class: 'tdr-hit-head' }, [
       el('span', { class: 'tdr-hit-num' }, [String(n)]),
+      el('span', { class: 'tdr-hit-badge', title: badgeLabel, 'aria-label': badgeLabel, html: badgeIcon }),
       el('span', { class: 'tdr-hit-subject' }, [h.subject]),
       el('span', { class: 'tdr-hit-score' }, [h.score.toFixed(3)]),
     ]);
-    if (h.internetMessageId) {
+    if (kind === 'mail' && h.internetMessageId) {
       const openBtn = el('button', {
         class: 'tdr-hit-open', 'aria-label': 'Outlook で開く', title: 'Outlook で開く',
         html: icons.external(14),
@@ -579,19 +584,36 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
         finally { openBtn.disabled = false; }
       });
       head.appendChild(openBtn);
+    } else if (kind === 'onenote' && h.conversationId) {
+      // OneNote では conversationId = ページID。relay 経由で OneNote 上に表示。
+      const openBtn = el('button', {
+        class: 'tdr-hit-open', 'aria-label': 'OneNote で開く', title: 'OneNote で開く',
+        html: icons.external(14),
+      });
+      openBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        openBtn.disabled = true;
+        try { await openOneNotePage(relayBaseUrl, h.conversationId); }
+        catch (err: unknown) { toast(root, `OneNote 表示に失敗: ${err instanceof Error ? err.message : String(err)}`, 'error'); }
+        finally { openBtn.disabled = false; }
+      });
+      head.appendChild(openBtn);
     }
     if (h.conversationId) {
       const sumBtn = el('button', {
-        class: 'tdr-hit-open', 'aria-label': '経緯を要約', title: '同じスレッドのやり取りを時系列で要約',
+        class: 'tdr-hit-open',
+        'aria-label': kind === 'onenote' ? 'ページ全体を要約' : '経緯を要約',
+        title: kind === 'onenote' ? '同じページのチャンクをまとめて要約' : '同じスレッドのやり取りを時系列で要約',
         html: icons.list(14),
       });
       sumBtn.addEventListener('click', (e) => { e.stopPropagation(); void summarizeThread(h); });
       head.appendChild(sumBtn);
     }
     hitEl.appendChild(head);
-    hitEl.appendChild(el('div', { class: 'tdr-hit-from' }, [
-      `${h.from}  ${h.date.slice(0, 10)}`,
-    ]));
+    const meta = kind === 'onenote'
+      ? `${h.from}  ${h.date.slice(0, 10)}${typeof h.chunkIdx === 'number' && h.chunkCount && h.chunkCount > 1 ? `  ・ チャンク #${h.chunkIdx + 1}/${h.chunkCount}` : ''}`
+      : `${h.from}  ${h.date.slice(0, 10)}`;
+    hitEl.appendChild(el('div', { class: 'tdr-hit-from' }, [meta]));
     const snippetEl = el('div', { class: 'tdr-hit-snippet' });
     highlightInto(snippetEl, plain.slice(0, 140) + (plain.length > 140 ? '…' : ''), query);
     hitEl.appendChild(snippetEl);
@@ -601,12 +623,44 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
       hitEl.classList.toggle('is-open');
       if (!detail) {
         detail = el('div', { class: 'tdr-hit-detail' });
-        detail.appendChild(renderMailHeader(h));
-        detail.appendChild(renderMailBodyWithHistoryToggle(h));
+        detail.appendChild(kind === 'onenote' ? renderOneNoteHeader(h) : renderMailHeader(h));
+        if (kind === 'onenote') {
+          const wrap = el('div', { class: 'tdr-hit-detail-body' });
+          renderMailBody(wrap, h.body, false);
+          detail.appendChild(wrap);
+        } else {
+          detail.appendChild(renderMailBodyWithHistoryToggle(h));
+        }
         hitEl.appendChild(detail);
       } else { detail.hidden = !detail.hidden; }
     });
     return hitEl;
+  }
+
+  /** OneNote ページ用ヘッダ (件名/最終更新/ノートブック › セクション/チャンク)。 */
+  function renderOneNoteHeader(h: SavedHit): HTMLElement {
+    const fmtDate = (iso: string): string => {
+      const d = new Date(iso); if (isNaN(d.getTime())) return iso || '';
+      const Y = d.getFullYear(), M = d.getMonth() + 1, D = d.getDate();
+      const hh = String(d.getHours()).padStart(2, '0'), mm = String(d.getMinutes()).padStart(2, '0');
+      return `${Y}-${String(M).padStart(2, '0')}-${String(D).padStart(2, '0')} ${hh}:${mm}`;
+    };
+    const row = (label: string, value: string): HTMLElement | null => {
+      if (!value) return null;
+      return el('div', { class: 'tdr-hit-hdr-row' }, [
+        el('span', { class: 'tdr-hit-hdr-label' }, [label]),
+        el('span', { class: 'tdr-hit-hdr-value' }, [value]),
+      ]);
+    };
+    const chunkInfo = (typeof h.chunkIdx === 'number' && h.chunkCount && h.chunkCount > 1)
+      ? `#${h.chunkIdx + 1} / 全 ${h.chunkCount}` : '';
+    const rows = [
+      row('タイトル', h.subject),
+      row('場所', h.from),
+      row('最終更新', fmtDate(h.date)),
+      row('チャンク', chunkInfo),
+    ].filter((x): x is HTMLElement => x !== null);
+    return el('div', { class: 'tdr-hit-hdr' }, rows);
   }
 
   /** 本文を「新規発言」+ 折りたたみ式「過去のやり取り」で描画する。 */

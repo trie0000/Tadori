@@ -5,6 +5,10 @@ export interface SavedHit {
   messageId: string;
   internetMessageId: string;
   conversationId: string;
+  kind: 'mail' | 'onenote' | 'doc';
+  chunkIdx?: number;
+  chunkCount?: number;
+  docPath?: string;
   subject: string;
   from: string;
   to: string[];

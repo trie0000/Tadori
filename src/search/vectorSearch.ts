@@ -10,6 +10,10 @@ export interface MailHit {
   messageId: string;
   internetMessageId: string;
   conversationId: string;
+  kind: 'mail' | 'onenote' | 'doc';
+  chunkIdx?: number;
+  chunkCount?: number;
+  docPath?: string;
   subject: string;
   from: string;
   to: string[];
@@ -25,6 +29,10 @@ function toHit(record: MailRecord, score: number): MailHit {
     messageId: record.messageId,
     internetMessageId: record.internetMessageId,
     conversationId: record.conversationId,
+    kind: record.kind ?? 'mail',
+    chunkIdx: record.chunkIdx,
+    chunkCount: record.chunkCount,
+    docPath: record.docPath,
     subject: record.subject,
     from: record.from,
     to: record.to,

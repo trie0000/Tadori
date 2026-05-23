@@ -17,8 +17,16 @@ export interface SegmentRecord {
   // op='upsert' のときのみ以下を持つ (delete は messageId だけの tombstone)。
   /** RFC2822 Internet-Message-Id (Outlook での再検索キー)。無い場合あり。 */
   internetMessageId?: string;
-  /** スレッド識別子 (Outlook ConversationID)。経緯要約のグルーピングに使う。 */
+  /** スレッド識別子 (Outlook ConversationID)。OneNote では parentDocId (pageId) を兼用。 */
   conversationId?: string;
+  /** ソース種別。'mail' (既定) / 'onenote' / 'doc'。 */
+  kind?: 'mail' | 'onenote' | 'doc';
+  /** 親ドキュメント内のチャンク番号 (0 始まり)。単一レコードならどちらも省略。 */
+  chunkIdx?: number;
+  /** 親ドキュメントの総チャンク数。 */
+  chunkCount?: number;
+  /** ドキュメントの擬似パス (例: "onenote://Notebook/Section/Page" / "/sites/x/.../file.docx")。 */
+  docPath?: string;
   subject?: string;
   from?: string;
   to?: string[];
