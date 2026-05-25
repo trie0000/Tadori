@@ -33,7 +33,7 @@ export interface MailRecord {
   messageId: string;
   internetMessageId: string;
   conversationId: string;
-  kind: 'mail' | 'onenote' | 'doc';
+  kind: 'mail' | 'onenote' | 'doc' | 'pptx';
   chunkIdx?: number;
   chunkCount?: number;
   docPath?: string;
@@ -45,6 +45,12 @@ export interface MailRecord {
   body: string;
   isHtml: boolean;
   vec: Float32Array; // L2 正規化済み
+  /** PPTX 取り込みのメタ (kind='pptx' のときのみ意味を持つ)。 */
+  pptxFile?: string;
+  pptxServerRelUrl?: string;
+  slideNo?: number;
+  slideTitle?: string;
+  thumbServerRelUrl?: string;
 }
 
 export interface DbHit {
@@ -92,6 +98,11 @@ export class VectorDb {
         body: r.body ?? '',
         isHtml: r.isHtml ?? false,
         vec: normalize(decodeEmbedding(r.emb)),
+        pptxFile: r.pptxFile,
+        pptxServerRelUrl: r.pptxServerRelUrl,
+        slideNo: r.slideNo,
+        slideTitle: r.slideTitle,
+        thumbServerRelUrl: r.thumbServerRelUrl,
       });
     }
     this.appliedSeq.set(r.messageId, r.seq);

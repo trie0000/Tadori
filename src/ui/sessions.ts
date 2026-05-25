@@ -5,7 +5,7 @@ export interface SavedHit {
   messageId: string;
   internetMessageId: string;
   conversationId: string;
-  kind: 'mail' | 'onenote' | 'doc';
+  kind: 'mail' | 'onenote' | 'doc' | 'pptx';
   chunkIdx?: number;
   chunkCount?: number;
   docPath?: string;
@@ -17,6 +17,12 @@ export interface SavedHit {
   body: string;
   isHtml: boolean;
   score: number;
+  /** PPTX 関連メタ (kind='pptx' のときのみ意味を持つ)。 */
+  pptxFile?: string;
+  pptxServerRelUrl?: string;
+  slideNo?: number;
+  slideTitle?: string;
+  thumbServerRelUrl?: string;
 }
 
 export interface SavedTurn {

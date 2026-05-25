@@ -11,7 +11,7 @@ export interface MailHit {
   messageId: string;
   internetMessageId: string;
   conversationId: string;
-  kind: 'mail' | 'onenote' | 'doc';
+  kind: 'mail' | 'onenote' | 'doc' | 'pptx';
   chunkIdx?: number;
   chunkCount?: number;
   docPath?: string;
@@ -23,6 +23,12 @@ export interface MailHit {
   body: string;
   isHtml: boolean;
   score: number;
+  /** PPTX 取り込みのメタ (kind='pptx' のときのみ意味を持つ)。 */
+  pptxFile?: string;
+  pptxServerRelUrl?: string;
+  slideNo?: number;
+  slideTitle?: string;
+  thumbServerRelUrl?: string;
 }
 
 function toHit(record: MailRecord, score: number): MailHit {
@@ -42,6 +48,11 @@ function toHit(record: MailRecord, score: number): MailHit {
     body: record.body,
     isHtml: record.isHtml,
     score,
+    pptxFile: record.pptxFile,
+    pptxServerRelUrl: record.pptxServerRelUrl,
+    slideNo: record.slideNo,
+    slideTitle: record.slideTitle,
+    thumbServerRelUrl: record.thumbServerRelUrl,
   };
 }
 

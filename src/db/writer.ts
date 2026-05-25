@@ -26,7 +26,13 @@ export interface IngestMail {
   /** スレッド識別子 (Outlook ConversationID) または OneNote ページID 等の親ドキュメントID。 */
   conversationId?: string;
   /** ソース種別。省略時は 'mail'。 */
-  kind?: 'mail' | 'onenote' | 'doc';
+  kind?: 'mail' | 'onenote' | 'doc' | 'pptx';
+  /** PPTX 関連メタ (kind='pptx' のときのみ意味を持つ)。検索結果カード/ジャンプで使用。 */
+  pptxFile?: string;
+  pptxServerRelUrl?: string;
+  slideNo?: number;
+  slideTitle?: string;
+  thumbServerRelUrl?: string;
   chunkIdx?: number;
   chunkCount?: number;
   docPath?: string;
@@ -155,6 +161,12 @@ export async function ingestToSegments(
       // 表示用は元の本文 (HTML はそのまま、表示時にサニタイズ)。サイズは上限で抑える。
       body: (m.body ?? '').slice(0, m.isHtml ? 30000 : 8000),
       isHtml: !!m.isHtml,
+      // PPTX 関連メタ (kind='pptx' のときのみ意味を持つ)。
+      pptxFile: m.pptxFile,
+      pptxServerRelUrl: m.pptxServerRelUrl,
+      slideNo: m.slideNo,
+      slideTitle: m.slideTitle,
+      thumbServerRelUrl: m.thumbServerRelUrl,
       emb: encodeEmbedding(normalize(vecs[i])),
     }));
 

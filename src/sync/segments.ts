@@ -19,8 +19,14 @@ export interface SegmentRecord {
   internetMessageId?: string;
   /** スレッド識別子 (Outlook ConversationID)。OneNote では parentDocId (pageId) を兼用。 */
   conversationId?: string;
-  /** ソース種別。'mail' (既定) / 'onenote' / 'doc'。 */
-  kind?: 'mail' | 'onenote' | 'doc';
+  /** ソース種別。'mail' (既定) / 'onenote' / 'doc' / 'pptx'。 */
+  kind?: 'mail' | 'onenote' | 'doc' | 'pptx';
+  /** PPTX 取り込みのメタ (kind='pptx' のときだけ意味を持つ)。 */
+  pptxFile?: string;
+  pptxServerRelUrl?: string;
+  slideNo?: number;
+  slideTitle?: string;
+  thumbServerRelUrl?: string;
   /** 親ドキュメント内のチャンク番号 (0 始まり)。単一レコードならどちらも省略。 */
   chunkIdx?: number;
   /** 親ドキュメントの総チャンク数。 */
