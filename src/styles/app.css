@@ -41,6 +41,9 @@
 #tadori-root .tdr-user-avatar{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--accent);color:#fff;font-weight:600;font-size:12px;flex-shrink:0;}
 #tadori-root .tdr-user-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 #tadori-root .tdr-presence{display:flex;align-items:center;gap:var(--s-2);padding:4px 10px;background:var(--paper-2);border:1px solid var(--line);border-radius:var(--r-2);font-size:var(--fs-xs);color:var(--ink-3);cursor:default;white-space:nowrap;}
+#tadori-root .tdr-site-chip{display:inline-flex;align-items:center;gap:var(--s-2);padding:3px 10px;background:var(--paper-2);border:1px solid var(--line);border-radius:99px;font-size:var(--fs-xs);color:var(--ink-3);cursor:default;white-space:nowrap;max-width:200px;}
+#tadori-root .tdr-site-chip .name{overflow:hidden;text-overflow:ellipsis;}
+#tadori-root .tdr-site-chip .ic{display:inline-flex;color:var(--ink-4);flex-shrink:0;}
 #tadori-root .tdr-presence .ic{font-size:12px;line-height:1;}
 #tadori-root .tdr-presence .cnt{font-weight:600;color:var(--ink);}
 #tadori-root .tdr-presence .sep{color:var(--ink-4);}

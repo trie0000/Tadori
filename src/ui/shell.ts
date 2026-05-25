@@ -12,6 +12,11 @@ import { applyFontSize } from '../utils/fontSize';
 import { getLease, type LeaseStatus } from '../sync/lease';
 import { startAutoIngest } from '../sync/autoIngest';
 import { ensureTadoriInboxList } from '../sync/inboxList';
+import {
+  getSelectedSiteUrl, setSelectedSiteUrl, detectCurrentSiteUrl,
+  fetchSiteTitle, refreshRecentSiteTitle,
+} from '../sharepoint/spSites';
+import { openSiteSelectionModal } from './siteSelectionModal';
 import cssText from '../styles/app.css';
 
 const LAST_BUILD_KEY = 'tadori:last-build';
@@ -31,7 +36,20 @@ export function boot(): void {
     return;
   }
 
-  const siteUrl = window._spPageContextInfo?.webAbsoluteUrl ?? location.origin;
+  // サイト決定 (Spira 流):
+  //   - 前回サイト (tadori:selected-site-url) があれば、そのまま使う (静かに高速起動)
+  //   - 無ければ起動中ページから推定 (_spPageContextInfo) + バックグラウンドで一度だけ保存
+  //   - 別サイトに切り替えたい時はトップバーの「サイト切替」ボタンから
+  let siteUrl = getSelectedSiteUrl();
+  if (!siteUrl) {
+    siteUrl = detectCurrentSiteUrl();
+    // 初回起動時は今のサイトを保存して、次回以降は静かに起動するようにする
+    if (siteUrl) {
+      setSelectedSiteUrl(siteUrl, siteUrl);
+      // タイトル取れたら recent を上書き (非同期)
+      void fetchSiteTitle(siteUrl).then(t => { if (t) refreshRecentSiteTitle(siteUrl!, t); });
+    }
+  }
   initUsage(siteUrl);
   const root    = el('div', { id: 'tadori-root' });
 
@@ -42,6 +60,13 @@ export function boot(): void {
   const moonBtn  = el('button', { class: 'tdr-iconbtn', 'aria-label': 'テーマ切替', html: icons.moon()     });
   const settBtn  = el('button', { class: 'tdr-iconbtn', 'aria-label': '設定',       html: icons.settings() });
   const closeBtn = el('button', { class: 'tdr-iconbtn', 'aria-label': 'アプリを閉じる', title: 'アプリを閉じる', html: icons.door() });
+  // SP サイト切替: 起動時は前回サイトをそのまま使うので、別サイトに切り替えたい時はこれ。
+  // 押すとアクセス可能サイト一覧モーダルを開き、選択後に shell を再マウントする。
+  const siteSwitchBtn = el('button', {
+    class: 'tdr-iconbtn', 'aria-label': 'サイト切替',
+    title: 'SP サイトを切替 (Tadori をマウントする対象サイトを変更)',
+    html: icons.folder(),
+  });
 
   moonBtn.addEventListener('click', () => {
     const isDark = root.dataset.theme === 'dark';
@@ -50,6 +75,20 @@ export function boot(): void {
   });
   settBtn.addEventListener('click', e => { e.stopPropagation(); openSettingsMenu(root, settBtn, siteUrl); });
   closeBtn.addEventListener('click', () => root.remove());
+  siteSwitchBtn.addEventListener('click', () => {
+    void openSiteSelectionModal().then((sel) => {
+      if (!sel) return;
+      // ページはリロードしない。Tadori ルートを撤去してから boot() を再実行。
+      // localStorage の selected-site-url が既に更新されているので新サイトで起動する。
+      root.remove();
+      // 念のため shell の常駐タイマー (lease.start 等) を止める手段は現状無いので、
+      // 同一ページ内で 2 つ動くのを避けるため即座にリブート。
+      boot();
+    });
+  });
+
+  // サイト切替時の表示用に、現在サイトのタイトルを小さく出す。
+  const siteChip = createSiteChip(siteUrl);
 
   const userChip = createUserChip(siteUrl);
   const presenceChip = createPresenceChip(siteUrl);
@@ -61,8 +100,10 @@ export function boot(): void {
       el('span', { class: 'sub' }, ['ML ナレッジサーチ']),
     ]),
     el('div', { class: 'tdr-spacer' }),
+    siteChip,
     presenceChip,
     userChip,
+    siteSwitchBtn,
     moonBtn,
     settBtn,
     closeBtn,
@@ -109,6 +150,35 @@ async function checkRelayAlive(root: HTMLElement): Promise<void> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** 現在の SP サイトを示す小チップ (タイトル + URL ホバー)。 */
+function createSiteChip(siteUrl: string): HTMLElement {
+  // 初期表示は URL の末尾セグメントで仮埋め (例: /sites/foo/... → "foo")。
+  // 起動後に fetchSiteTitle で取れたら正式名で上書き。
+  const fallbackLabel = ((): string => {
+    try {
+      const u = new URL(siteUrl);
+      const m = u.pathname.match(/^\/(?:sites|teams)\/([^/]+)/i);
+      return m ? decodeURIComponent(m[1]) : u.host;
+    } catch { return siteUrl; }
+  })();
+  const labelEl = el('span', { class: 'name' }, [fallbackLabel]);
+  const chip = el('div', {
+    class: 'tdr-site-chip', title: siteUrl, 'aria-label': '現在の SP サイト',
+  }, [
+    el('span', { class: 'ic', html: icons.folder(12) }),
+    labelEl,
+  ]);
+  // 非同期にサイトタイトル取得 → 取れたら表示更新 + recent も上書き
+  void fetchSiteTitle(siteUrl).then(t => {
+    if (t) {
+      labelEl.textContent = t;
+      chip.title = `${t}\n${siteUrl}`;
+      refreshRecentSiteTitle(siteUrl, t);
+    }
+  });
+  return chip;
 }
 
 // ログインユーザー表示 (Spira 同様)。アバター(イニシャル) + 名前のチップ。
