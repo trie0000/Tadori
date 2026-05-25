@@ -183,7 +183,8 @@ function buildAiPane(pane: HTMLElement, draft: RuntimeSettings): void {
     ...mkRow('API キー', mkInput(draft.apiKey, v => { draft.apiKey = v; }, 'password'), 'Azure OpenAI 互換 API キー'),
     ...mkRow('ベース URL', mkInput(draft.relayBaseUrl, v => { draft.relayBaseUrl = v; }), '中継サーバ / ゲートウェイ (例: http://localhost:18080)'),
     ...mkRow('デプロイ prefix', mkInput(draft.corpDeployPrefix, v => { draft.corpDeployPrefix = v; }), 'デプロイ名 = <prefix><モデル名(.除去)>'),
-    ...mkRow('チャットモデル', mkSelect(corpModelOpts, draft.chatModel, v => { draft.chatModel = v; }), 'RAG 回答生成に使うモデル'),
+    ...mkRow('チャットモデル', mkSelect(corpModelOpts, draft.chatModel, v => { draft.chatModel = v; }), 'RAG 回答生成に使うモデル (チャット欄のピッカーでも変更可)'),
+    ...mkRow('Vision モデル', mkSelect(corpModelOpts, draft.visionModel, v => { draft.visionModel = v; }), 'PPTX 取り込みの画像解析専用。チャットとは独立 (高精度モデル固定推奨)'),
     ...mkRow('埋め込みモデル', mkSelect(embModelOpts, draft.embeddingModel, v => { draft.embeddingModel = v; }), '検索ベクトル生成 (Tadori 固有)'),
     ...mkRow('埋め込み API バージョン', mkInput(draft.apiVersion, v => { draft.apiVersion = v; }), '例: 2024-02-01'),
     ...mkRow('次元数', mkInput(String(draft.dimensions), v => { draft.dimensions = Number(v) || 256; }), 'Matryoshka 短縮次元数 (256)'),
@@ -842,13 +843,14 @@ function buildPptxImport(pane: HTMLElement, draft: RuntimeSettings, root: HTMLEl
 
       syncBtn.addEventListener('click', () => { void runSync([f]); });
       forceBtn.addEventListener('click', () => {
-        const provider = loadSettings().provider === 'claude' ? loadSettings().claudeModel : loadSettings().chatModel;
+        // Vision モデルは設定 (visionModel) から取得。チャット欄ピッカーの影響を受けない。
+        const visionModel = loadSettings().visionModel;
         confirmModal({
           root,
           title: '強制再取り込み',
           message:
             `このフォルダの全 .pptx (${fileCount} 件) を再解析します。\n` +
-            `現在の Vision モデル: ${provider}\n\n` +
+            `現在の Vision モデル: ${visionModel} (設定 → AI 設定 → Vision モデル)\n\n` +
             `Vision LLM のコストが再発生します (1 スライド ≒ 1 円)。\n` +
             `既存の chunk は同じ ID で上書きされるので DB に重複は残りません。`,
           primaryLabel: '再取り込み',

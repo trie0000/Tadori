@@ -57,6 +57,8 @@ export const DEFAULT_CORP_MODEL = 'gpt-4.1-mini';
 export const DEFAULT_CLAUDE_MODEL = 'claude-sonnet-4-5';
 export const DEFAULT_VOYAGE_MODEL = 'voyage-3.5-lite';
 export const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-large';
+/** Vision (PPTX 取り込み) のデフォルト。チャット用と分離するための独立既定値。 */
+export const DEFAULT_VISION_MODEL = 'gpt-4o';
 const DEFAULT_EMBEDDING_API_VERSION = '2024-02-01';
 
 const KEY = {
@@ -87,6 +89,9 @@ const KEY = {
   enterSends:          'tadori:enter-sends',
   rerankEnabled:       'tadori:rerank-enabled',
   rerankCandidates:    'tadori:rerank-candidates',
+  // Vision モデル (PPTX 取り込み時の画像解析専用)。チャット用 chatModel とは別。
+  // チャット欄のモデルピッカーは chatModel を変えるが、こちらは設定ハブからのみ変更可。
+  visionModel:         'tadori:ai:vision-model',
 } as const;
 
 const DEFAULT_SUFFIX = ':default';
@@ -150,6 +155,14 @@ function getEmbeddingModel(): string {
   return lsGetEff(KEY.embeddingModel) || DEFAULT_EMBEDDING_MODEL;
 }
 
+/** Vision モデル (PPTX 取り込みの画像解析専用)。
+ *  チャット用 chatModel とは独立。CORP_AI_MODELS から選ぶ前提だが、
+ *  unknown な値もそのまま許す (Azure OpenAI 側で deploy 済みなら通る)。 */
+function getVisionModel(): string {
+  const stored = lsGetEff(KEY.visionModel);
+  return stored || DEFAULT_VISION_MODEL;
+}
+
 // ─── RuntimeSettings ───────────────────────────────────────────────────────
 
 export interface RuntimeSettings {
@@ -166,6 +179,12 @@ export interface RuntimeSettings {
   chatBaseUrl: string;       // チャット URL のベース (per-model override 反映)
   chatDeployment: string;    // チャットデプロイ名
   chatApiVersion: string;    // チャット apiVersion
+
+  // Vision (PPTX 取り込み専用、設定ハブで独立指定)
+  visionModel: string;       // モデル ID (UI 表示 + 既定値判定用)
+  visionBaseUrl: string;     // Vision URL のベース
+  visionDeployment: string;  // Vision デプロイ名
+  visionApiVersion: string;  // Vision apiVersion
 
   // 埋め込み (EmbedConfig を構造的に満たす)
   relayBaseUrl: string;        // 埋め込み URL のベース (= corp ベース URL)
@@ -241,6 +260,8 @@ export function loadSettings(): RuntimeSettings {
   const chatModel = getCorpModel();
   const chatEp = resolveCorpChat(chatModel);
   const embeddingModel = getEmbeddingModel();
+  const visionModel = getVisionModel();
+  const visionEp = resolveCorpChat(visionModel); // 同じ corp デプロイ規約で解決
 
   return {
     provider: resolveProvider(),
@@ -254,6 +275,11 @@ export function loadSettings(): RuntimeSettings {
     chatBaseUrl: chatEp.baseUrl,
     chatDeployment: chatEp.deploymentId,
     chatApiVersion: chatEp.apiVersion,
+
+    visionModel,
+    visionBaseUrl: visionEp.baseUrl,
+    visionDeployment: visionEp.deploymentId,
+    visionApiVersion: visionEp.apiVersion,
 
     relayBaseUrl: corpBaseUrl(),
     embeddingDeployment: deploymentIdFor(embeddingModel),
@@ -292,6 +318,7 @@ export function saveSettings(s: Partial<RuntimeSettings>): void {
   if (s.dimensions !== undefined)       lsSet(KEY.dimensions, String(s.dimensions));
   if (s.claudeApiKey !== undefined)     lsSet(KEY.claudeKey, s.claudeApiKey.trim());
   if (s.claudeModel !== undefined)      lsSet(KEY.claudeModel, s.claudeModel);
+  if (s.visionModel !== undefined)      lsSet(KEY.visionModel, s.visionModel);
   if (s.voyageApiKey !== undefined)     lsSet(KEY.voyageKey, s.voyageApiKey.trim());
   if (s.voyageModel !== undefined)      lsSet(KEY.voyageModel, s.voyageModel);
   if (s.listTitle !== undefined)        lsSet(KEY.listTitle, s.listTitle);

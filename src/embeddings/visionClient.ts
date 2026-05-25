@@ -141,9 +141,11 @@ export async function describeSlide(
     '画像と補助情報を統合し、Markdown のみを出力してください。',
   ].join('\n');
 
-  const url = `${s.chatBaseUrl.replace(/\/+$/, '')}`
-    + `/openai/deployments/${encodeURIComponent(s.chatDeployment)}`
-    + `/chat/completions?api-version=${encodeURIComponent(s.chatApiVersion)}`;
+  // Vision モデルはチャット用と独立 (設定ハブで指定)。チャット欄のモデルピッカーで
+  // 切替えても影響しない (= 取り込み時の高精度モデルを固定したいユースケース対応)。
+  const url = `${s.visionBaseUrl.replace(/\/+$/, '')}`
+    + `/openai/deployments/${encodeURIComponent(s.visionDeployment)}`
+    + `/chat/completions?api-version=${encodeURIComponent(s.visionApiVersion)}`;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (s.apiKey) headers['api-key'] = s.apiKey;
 
@@ -187,8 +189,8 @@ export async function describeSlide(
       const md = (json.choices?.[0]?.message?.content ?? '').trim();
       const inTok = json.usage?.prompt_tokens ?? Math.ceil((SYSTEM_PROMPT.length + userTextPart.length) / 3) + 1200;
       const outTok = json.usage?.completion_tokens ?? Math.ceil(md.length / 3);
-      // 使用量計上 (チャットメーターと同じバケットに記録)
-      recordChat(s.chatModel, inTok, outTok);
+      // 使用量計上 (Vision モデル名で記録)
+      recordChat(s.visionModel, inTok, outTok);
       return {
         markdown: md,
         inputTokens: inTok,
@@ -209,7 +211,7 @@ export async function describeSlide(
   throw new Error(`Vision LLM failed (slide ${input.slideNo}): retries exhausted`);
 }
 
-/** 円換算ヘルパ (UI 表示用)。チャットモデルと同じ単価で計上。 */
+/** 円換算ヘルパ (UI 表示用)。Vision モデルの単価で計上。 */
 export function visionYen(s: RuntimeSettings, r: VisionResult): number {
-  return chatYen(s.chatModel, r.inputTokens + r.outputTokens);
+  return chatYen(s.visionModel, r.inputTokens + r.outputTokens);
 }
