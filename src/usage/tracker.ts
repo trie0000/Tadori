@@ -18,6 +18,10 @@ export interface UsageTotals { month: string; total: number; ownYen: number; own
 let sp: SharePointClient | null = null;
 let listReady: Promise<void> | null = null;
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
+// 一度 SP への書込が失敗 (権限不足 / リスト作成不可 / スコープ違い等) したら、
+// 同セッション中の再試行を停止する。Console を 404/403 で埋め尽くすのを防ぐ。
+// 利用料の集計が止まるだけで、本体機能 (チャット / 取り込み) には影響しない。
+let disabledForSession = false;
 
 export function initUsage(siteUrl: string): void {
   try { sp = new SharePointClient(siteUrl); } catch { sp = null; }
@@ -71,38 +75,61 @@ export function recordEmbed(tokens: number): void {
 }
 
 function scheduleFlush(): void {
-  if (!sp) return;
+  if (!sp || disabledForSession) return;
   if (flushTimer) clearTimeout(flushTimer);
   flushTimer = setTimeout(() => { void flush().catch(() => { /* best-effort */ }); }, FLUSH_DELAY);
 }
 
 async function ensureList(): Promise<void> {
   if (!sp) throw new Error('no sp');
+  if (disabledForSession) throw new Error('usage tracker disabled for this session');
   if (!listReady) {
     listReady = sp.ensureList(LIST_TITLE, [
       { name: 'Month', type: 'text' },
       { name: 'TadoriUser', type: 'text' },
       { name: 'Yen', type: 'number' },
       { name: 'Tokens', type: 'number' },
-    ]).then(() => undefined).catch((e) => { listReady = null; throw e; });
+    ]).then(() => undefined).catch((e) => {
+      // ensureList が失敗したら同セッション中の再試行を打ち切る。
+      // よくある原因: 権限不足でリスト作成不可 / Tadori 起動サイトと書込先サイトが不一致。
+      disabledForSession = true;
+      console.warn(
+        '[tadori] 利用料トラッカー無効化: SP リスト作成/取得に失敗しました。',
+        '本体機能には影響しませんが、AI 利用料の集計は今セッション中は記録されません。',
+        'エラー:', (e as Error).message,
+      );
+      listReady = null;
+      throw e;
+    });
   }
   await listReady;
 }
 
-/** 当月の自分の累計を SharePoint の自分の行へ反映 (絶対値で SET = 冪等)。 */
+/** 当月の自分の累計を SharePoint の自分の行へ反映 (絶対値で SET = 冪等)。
+ *  失敗時は disabledForSession で同セッションの再試行を打ち切る (Console を 404/403 で埋め尽くさない)。 */
 export async function flush(): Promise<void> {
-  if (!sp) return;
+  if (!sp || disabledForSession) return;
   const m = monthKey();
   const u = loadMonth(m);
   const user = currentUser();
   const title = `${m}|${user}`;
-  await ensureList();
-  const fields = { Title: title, Month: m, TadoriUser: user, Yen: Math.round(u.yen * 100) / 100, Tokens: u.tokens };
-  const rows = await sp.getItems(LIST_TITLE, `$filter=Title eq '${title.replace(/'/g, "''")}'&$select=Id&$top=1`);
-  if (rows.length && rows[0].Id) {
-    await sp.updateItem(LIST_TITLE, rows[0].Id, fields, '*'); // 自分専用行なので無条件更新で可
-  } else {
-    await sp.createItem(LIST_TITLE, fields);
+  try {
+    await ensureList();
+    const fields = { Title: title, Month: m, TadoriUser: user, Yen: Math.round(u.yen * 100) / 100, Tokens: u.tokens };
+    const rows = await sp.getItems(LIST_TITLE, `$filter=Title eq '${title.replace(/'/g, "''")}'&$select=Id&$top=1`);
+    if (rows.length && rows[0].Id) {
+      await sp.updateItem(LIST_TITLE, rows[0].Id, fields, '*'); // 自分専用行なので無条件更新で可
+    } else {
+      await sp.createItem(LIST_TITLE, fields);
+    }
+  } catch (e) {
+    // ensureList 通過後 (= List はある) で update/create が失敗するケースも、
+    // 連発しないよう disable する。次セッションで再度試す。
+    if (!disabledForSession) {
+      disabledForSession = true;
+      console.warn('[tadori] 利用料書込失敗、セッション中の再試行を停止:', (e as Error).message);
+    }
+    throw e;
   }
 }
 
