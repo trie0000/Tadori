@@ -832,11 +832,30 @@ function buildPptxImport(pane: HTMLElement, draft: RuntimeSettings, root: HTMLEl
         `最終同期: ${lastSync}　/　ファイル: ${fileCount} 件　/　${f.recursive ? '再帰あり' : '直下のみ'}`,
       ]);
       const syncBtn = el('button', { class: 'tdr-btn', style: 'font-size:var(--fs-sm)' }, ['同期']);
+      const forceBtn = el('button', {
+        class: 'tdr-btn', style: 'font-size:var(--fs-sm)',
+        title: '更新時刻に関係なく全 pptx を再解析 (Vision モデル変更時など)',
+      }, ['強制再取り込み']);
       const delBtn = el('button', { class: 'tdr-btn', style: 'font-size:var(--fs-sm)' }, ['削除']);
-      const actions = el('div', { style: 'display:flex;gap:var(--s-2);margin-top:var(--s-2)' }, [syncBtn, delBtn]);
+      const actions = el('div', { style: 'display:flex;gap:var(--s-2);margin-top:var(--s-2)' }, [syncBtn, forceBtn, delBtn]);
       const card = el('div', { style: 'border:1px solid var(--line);border-radius:var(--r-2);padding:var(--s-3)' }, [head, meta, actions]);
 
       syncBtn.addEventListener('click', () => { void runSync([f]); });
+      forceBtn.addEventListener('click', () => {
+        const provider = loadSettings().provider === 'claude' ? loadSettings().claudeModel : loadSettings().chatModel;
+        confirmModal({
+          root,
+          title: '強制再取り込み',
+          message:
+            `このフォルダの全 .pptx (${fileCount} 件) を再解析します。\n` +
+            `現在の Vision モデル: ${provider}\n\n` +
+            `Vision LLM のコストが再発生します (1 スライド ≒ 1 円)。\n` +
+            `既存の chunk は同じ ID で上書きされるので DB に重複は残りません。`,
+          primaryLabel: '再取り込み',
+          primaryVariant: 'danger',
+          onConfirm: () => { void runSync([f], { force: true }); },
+        });
+      });
       delBtn.addEventListener('click', () => {
         confirmModal({
           root,
@@ -863,7 +882,7 @@ function buildPptxImport(pane: HTMLElement, draft: RuntimeSettings, root: HTMLEl
     toast(root, 'フォルダを追加しました。「同期」ボタンで取り込みを開始してください', 'ok');
   });
 
-  async function runSync(folders: PptxFolderConfig[]): Promise<void> {
+  async function runSync(folders: PptxFolderConfig[], runOpts: { force?: boolean } = {}): Promise<void> {
     if (ac) return;
     ac = new AbortController();
     syncAllBtn.style.display = 'none'; stopBtn.style.display = '';
@@ -873,13 +892,14 @@ function buildPptxImport(pane: HTMLElement, draft: RuntimeSettings, root: HTMLEl
       for (let i = 0; i < folders.length; i++) {
         if (ac.signal.aborted) break;
         const f = folders[i];
-        status.textContent = `[${i + 1}/${folders.length}] ${f.label || deriveLabel(f.url)} を同期中…`;
+        const tag = runOpts.force ? '【強制再取り込み】 ' : '';
+        status.textContent = `${tag}[${i + 1}/${folders.length}] ${f.label || deriveLabel(f.url)} を同期中…`;
         const r = await syncPptxFolder(
           f, draft, siteUrl,
           (p: PptxIngestProgress) => {
             const fileLabel = p.file ? `${p.file} (${p.fileIdx}/${p.fileTotal})` : '一覧取得中';
             const slideLabel = p.slideTotal > 0 ? ` / スライド ${p.slideIdx}/${p.slideTotal}` : '';
-            status.textContent = `${fileLabel}${slideLabel} — ${p.message ?? p.phase}`;
+            status.textContent = `${tag}${fileLabel}${slideLabel} — ${p.message ?? p.phase}`;
             // ファイル数だけで簡易プログレス (スライド粒度はステータス文で表現)
             if (p.fileTotal > 0) {
               const pct = Math.round(((p.fileIdx - 1) + (p.slideTotal > 0 ? p.slideIdx / p.slideTotal : 0)) / p.fileTotal * 100);
@@ -887,6 +907,7 @@ function buildPptxImport(pane: HTMLElement, draft: RuntimeSettings, root: HTMLEl
             }
           },
           ac.signal,
+          { force: runOpts.force },
         );
         totalIngested += r.ingestedSlides;
         totalSkipped += r.skippedFiles;

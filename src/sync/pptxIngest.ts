@@ -116,8 +116,9 @@ function filterPptxFiles(items: FileInfo[]): FileInfo[] {
   });
 }
 
-/** 増分判定: 前回 perFile と今回 SP の lastModified を比較。 */
-function pickTargets(now: FileInfo[], prev: Record<string, string>): {
+/** 増分判定: 前回 perFile と今回 SP の lastModified を比較。
+ *  force=true なら全ファイルを toIngest にまとめる (Vision モデル変更時の再解析用)。 */
+function pickTargets(now: FileInfo[], prev: Record<string, string>, force = false): {
   toIngest: FileInfo[];
   skipped: FileInfo[];
   deleted: string[];   // ファイル名 (今回 SP に無いもの)
@@ -127,6 +128,7 @@ function pickTargets(now: FileInfo[], prev: Record<string, string>): {
   const nowNames = new Set<string>();
   for (const f of now) {
     nowNames.add(f.name);
+    if (force) { toIngest.push(f); continue; }
     const prevTs = prev[f.name];
     if (!prevTs || prevTs !== f.timeLastModified) toIngest.push(f);
     else skipped.push(f);
@@ -251,13 +253,16 @@ function findExistingMessageIds(eng: Awaited<ReturnType<typeof getEngine>>, serv
   return out;
 }
 
-/** 1 フォルダ分の取り込み (新規 / 更新ファイル + 削除検知)。 */
+/** 1 フォルダ分の取り込み (新規 / 更新ファイル + 削除検知)。
+ *  force=true なら lastModified によるスキップを無効化し、全 pptx を再解析する
+ *  (Vision モデル変更で再分析したい場合等)。Vision LLM のコストが再発生する点に注意。 */
 export async function syncPptxFolder(
   folder: PptxFolderConfig,
   s: RuntimeSettings,
   fallbackSiteUrl: string,
   onProgress?: (p: PptxIngestProgress) => void,
   signal?: AbortSignal,
+  opts: { force?: boolean } = {},
 ): Promise<PptxIngestResult> {
   const { siteUrl, folderServerRel } = resolveSpFolder(folder.url, fallbackSiteUrl);
   const sp = new SharePointClient(siteUrl);
@@ -283,8 +288,9 @@ export async function syncPptxFolder(
     });
   }
 
-  // 2. 増分判定 & 削除検知
-  const { toIngest, skipped, deleted } = pickTargets(pptxFiles, folder.perFile);
+  // 2. 増分判定 & 削除検知 (force=true で全ファイル再取り込み)
+  const { toIngest, skipped, deleted } = pickTargets(pptxFiles, folder.perFile, opts.force === true);
+  if (opts.force) console.log('[tadori] pptx sync: 強制再取り込みモード — 全 pptx を再解析');
 
   // サムネは <pptx-folder>/.tadori-thumbs に集約 (1 フォルダ運用想定)
   const thumbFolderServerRel = `${folderServerRel}/.tadori-thumbs`;
