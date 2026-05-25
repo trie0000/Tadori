@@ -522,13 +522,15 @@ export interface FileInfo {
  *       https://contoso.sharepoint.com/sites/foo/Shared%20Documents/Manuals
  *       → /sites/foo/Shared Documents/Manuals
  *    B. モダン UI のビュー URL (アドレスバーに出る形)
- *       https://contoso.sharepoint.com/sites/foo/Shared%20Documents/Forms/AllItems.aspx?id=%2Fsites%2Ffoo%2FShared%20Documents%2FManuals&viewid=...
- *       → /sites/foo/Shared Documents/Manuals  (?id= を優先)
- *    C. serverRelativeUrl がそのまま
+ *       https://contoso.sharepoint.com/.../Forms/AllItems.aspx?id=%2Fsites%2F...
+ *       → ?id= を優先
+ *    C. 短縮共有リンク (Copy link / 「リンクをコピー」)
+ *       https://contoso.sharepoint.com/:f:/r/sites/foo/Shared%20Documents/Manuals
+ *       → /sites/foo/Shared Documents/Manuals  ( /:?:/r/ プレフィックスを剥がす)
+ *       ※ :f:/g/<opaque-id> 形式 (ゲスト共有) は ID 解決不可。
+ *          先にブラウザで開いてリダイレクト後の URL をコピーする必要あり。
+ *    D. serverRelativeUrl がそのまま
  *       /sites/foo/Shared Documents/Manuals
- *       → そのまま (decode のみ)
- *    D. ファイル直リンク (.pptx 等)
- *       → 末尾のファイル名は剥がさず serverRelative にする (呼び出し側で処理)
  */
 export function toServerRelativeUrl(input: string): string {
   const s = input.trim();
@@ -540,12 +542,24 @@ export function toServerRelativeUrl(input: string): string {
     // ?RootFolder= も同じ意味で出ることがある (classic / OneDrive)
     const idParam = u.searchParams.get('id') || u.searchParams.get('RootFolder');
     if (idParam) {
-      // id は既に / 始まりの serverRelative。decode + 末尾スラッシュ整理
       return safeDecode(idParam).replace(/\/+$/, '');
     }
-    // 通常: pathname をそのまま使う。AllItems.aspx 等ビュー URL は除外する必要があるが、
-    // それは id パラメータ無しで来ることはまず無い (出来たら最後の "/Forms/AllItems.aspx" を取り除く)
     let pathname = u.pathname.replace(/\/+$/, '');
+    // 短縮共有リンクのプレフィックス: /:f:/r/  /:b:/r/  /:p:/r/  /:w:/r/  /:x:/r/  /:o:/r/  /:u:/r/ など
+    // /r/ の後ろがそのまま serverRelative パス。
+    const shortMatch = pathname.match(/^\/:[a-z]:\/r(\/.*)$/i);
+    if (shortMatch) {
+      return safeDecode(shortMatch[1]);
+    }
+    // /:f:/g/<opaque-id> 形式はパス情報を含まないので解決不可。警告ログだけ出して
+    // pathname をそのまま返す (呼び出し側の SP REST が 400/404 で気付く)。
+    if (/^\/:[a-z]:\/[sg]\//i.test(pathname)) {
+      console.warn(
+        '[tadori] ゲスト共有/Short share URL 形式 (/:?:/g/ 等) は serverRelativeUrl を含まないため解決できません。',
+        '一度ブラウザで開いて、リダイレクト後のアドレスバー URL をコピーしてください。',
+      );
+    }
+    // 通常: pathname を使用。AllItems.aspx ビュー URL は最後を除去。
     pathname = pathname.replace(/\/Forms\/AllItems\.aspx$/i, '');
     return safeDecode(pathname);
   } catch {

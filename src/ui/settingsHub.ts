@@ -766,11 +766,16 @@ function buildPptxImport(pane: HTMLElement, draft: RuntimeSettings, root: HTMLEl
     el('summary', { style: 'cursor:pointer' }, ['どの URL を貼ればいい?']),
     el('div', { style: 'padding:var(--s-2) 0 0 var(--s-4)' }, [
       el('div', {}, ['SP の「ドキュメント」を開いて取り込みたいフォルダに入り、ブラウザのアドレスバーをコピーで OK。']),
-      el('div', { style: 'margin-top:var(--s-2)' }, ['対応する形式:']),
+      el('div', { style: 'margin-top:var(--s-2)' }, ['対応する形式 (どれでも自動で正規化されます):']),
       el('ul', { style: 'margin:var(--s-1) 0 0 var(--s-4);padding:0' }, [
-        el('li', {}, ['モダン UI のビュー URL (', el('code', {}, ['?id=...']), ' 付き) — そのまま貼って OK']),
+        el('li', {}, ['モダン UI のビュー URL (', el('code', {}, ['?id=...']), ' 付き)']),
+        el('li', {}, ['短縮共有リンク (', el('code', {}, [':f:/r/']), ' 形式 — 「リンクをコピー」した時に出る)']),
         el('li', {}, ['フォルダの直接リンク (', el('code', {}, ['https://.../Shared Documents/Manuals']), ')']),
         el('li', {}, ['serverRelative パス (', el('code', {}, ['/sites/foo/Shared Documents/Manuals']), ')']),
+      ]),
+      el('div', { style: 'margin-top:var(--s-2);color:var(--warn,#b46f00)' }, [
+        '⚠ ゲスト共有リンク (', el('code', {}, [':f:/g/<long-id>']), ') はパス情報を持たないので使えません。',
+        '一度ブラウザで開いて、リダイレクト後のアドレスバー URL をコピーしてください。',
       ]),
     ]),
   ]);
