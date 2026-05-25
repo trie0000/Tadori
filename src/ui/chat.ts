@@ -16,6 +16,7 @@ import { isDeveloperMode } from '../utils/devMode';
 import { renderMarkdown } from '../lib/markdown';
 import { openMailInOutlook } from '../outlook/import';
 import { openOneNotePage, appendOneNotePage, markdownToBlocks, fetchCurrentOneNotePageId, fetchOneNoteLinks, fetchOneNoteHierarchy, fetchTadoriOutlines, replaceTadoriOutline, type TadoriOutline } from '../onenote/import';
+import { openPptxAtSlide } from '../sync/pptxIngest';
 import { currentUser } from '../usage/tracker';
 import { getEngine } from '../db/engine';
 import { getExcludedOneNotePageIds } from '../onenote/exclude';
@@ -1019,12 +1020,22 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     const plain = h.isHtml ? htmlToText(h.body) : h.body;
     const hitEl = el('div', { class: `tdr-hit tdr-hit--${kind}` });
     hitEl.dataset.n = String(n); // [n] クリックでの引き当て用
-    const badgeIcon = kind === 'onenote' ? icons.notebook(12) : kind === 'doc' ? icons.folder(12) : icons.message(12);
-    const badgeLabel = kind === 'onenote' ? 'OneNote' : kind === 'doc' ? '文書' : 'メール';
+    const badgeIcon = kind === 'onenote' ? icons.notebook(12)
+      : kind === 'pptx' ? icons.presentation(12)
+      : kind === 'doc' ? icons.folder(12)
+      : icons.message(12);
+    const badgeLabel = kind === 'onenote' ? 'OneNote'
+      : kind === 'pptx' ? 'PPTX'
+      : kind === 'doc' ? '文書'
+      : 'メール';
+    // pptx は「ファイル名 — スライド N: タイトル」の形に組み替えて視認性向上。
+    const subjectText = kind === 'pptx' && h.pptxFile
+      ? `${h.pptxFile} — スライド ${h.slideNo}: ${h.slideTitle || h.subject}`
+      : h.subject;
     const head = el('div', { class: 'tdr-hit-head' }, [
       el('span', { class: 'tdr-hit-num' }, [String(n)]),
       el('span', { class: 'tdr-hit-badge', title: badgeLabel, 'aria-label': badgeLabel, html: badgeIcon }),
-      el('span', { class: 'tdr-hit-subject' }, [h.subject]),
+      el('span', { class: 'tdr-hit-subject' }, [subjectText]),
       el('span', { class: 'tdr-hit-score' }, [h.score.toFixed(3)]),
     ]);
     if (kind === 'mail' && h.internetMessageId) {
@@ -1054,6 +1065,37 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
         finally { openBtn.disabled = false; }
       });
       head.appendChild(openBtn);
+    } else if (kind === 'pptx' && h.pptxServerRelUrl) {
+      // PPTX: relay 経由で PowerPoint を開いて該当スライドへ。relay が無いなら
+      // SP Office Online ビューアの URL に新規タブで遷移するフォールバック。
+      const openBtn = el('button', {
+        class: 'tdr-hit-open', 'aria-label': 'PowerPoint で開く', title: 'PowerPoint で開く (該当スライドへ)',
+        html: icons.external(14),
+      });
+      openBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        openBtn.disabled = true;
+        const slideNo = h.slideNo ?? 1;
+        try {
+          // relay 経由で PowerPoint を開く + GotoSlide
+          // 絶対 URL を組む: siteUrl は createChatPanel の siteUrl 引数からは見えるが、
+          // ここではブラウザの location.origin + pptxServerRelUrl で組む方が安全。
+          const absUrl = h.pptxServerRelUrl!.startsWith('http')
+            ? h.pptxServerRelUrl!
+            : `${location.origin}${h.pptxServerRelUrl}`;
+          await openPptxAtSlide(relayBaseUrl, absUrl, slideNo);
+        } catch (err) {
+          // フォールバック: Office Online ビューアで開く (SP Cookie で認証通る)
+          const absUrl = h.pptxServerRelUrl!.startsWith('http')
+            ? h.pptxServerRelUrl!
+            : `${location.origin}${h.pptxServerRelUrl}`;
+          window.open(`${absUrl}?web=1&action=embedview&wdSlideId=${slideNo}`, '_blank', 'noopener');
+          toast(root, `PowerPoint 起動失敗、Office Online で開きます: ${err instanceof Error ? err.message : String(err)}`, 'warn');
+        } finally {
+          openBtn.disabled = false;
+        }
+      });
+      head.appendChild(openBtn);
     }
     if (h.conversationId) {
       const sumBtn = el('button', {
@@ -1079,18 +1121,60 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
       hitEl.classList.toggle('is-open');
       if (!detail) {
         detail = el('div', { class: 'tdr-hit-detail' });
-        detail.appendChild(kind === 'onenote' ? renderOneNoteHeader(h) : renderMailHeader(h));
-        if (kind === 'onenote') {
+        if (kind === 'pptx') {
+          detail.appendChild(renderPptxHeader(h));
+          const wrap = el('div', { class: 'tdr-hit-detail-body' });
+          // body は既に Markdown (Vision LLM 出力)。OneNote と同じ Markdown レンダラを流用。
+          renderMailBody(wrap, h.body, false);
+          detail.appendChild(wrap);
+        } else if (kind === 'onenote') {
+          detail.appendChild(renderOneNoteHeader(h));
           const wrap = el('div', { class: 'tdr-hit-detail-body' });
           renderMailBody(wrap, h.body, false);
           detail.appendChild(wrap);
         } else {
+          detail.appendChild(renderMailHeader(h));
           detail.appendChild(renderMailBodyWithHistoryToggle(h));
         }
         hitEl.appendChild(detail);
       } else { detail.hidden = !detail.hidden; }
     });
     return hitEl;
+  }
+
+  /** PPTX スライド用ヘッダ。サムネ + ファイル名 + スライド番号/タイトル + 最終更新。 */
+  function renderPptxHeader(h: SavedHit): HTMLElement {
+    const meta = el('div', { class: 'tdr-hit-detail-meta' }, [
+      el('div', {}, [
+        el('span', { class: 'tdr-hit-detail-label' }, ['ファイル: ']),
+        el('span', { class: 'mono', style: 'font-size:var(--fs-sm)' }, [h.pptxFile || '(不明)']),
+      ]),
+      el('div', {}, [
+        el('span', { class: 'tdr-hit-detail-label' }, ['スライド: ']),
+        el('span', {}, [`${h.slideNo} — ${h.slideTitle || h.subject}`]),
+      ]),
+      h.date ? el('div', {}, [
+        el('span', { class: 'tdr-hit-detail-label' }, ['最終更新: ']),
+        el('span', {}, [h.date.slice(0, 10)]),
+      ]) : null,
+    ].filter(Boolean) as HTMLElement[]);
+
+    const head = el('div', { class: 'tdr-hit-detail-head' }, [meta]);
+
+    // サムネ (SP に上がっていればロード)。失敗は静かに無視。
+    if (h.thumbServerRelUrl) {
+      const thumbUrl = h.thumbServerRelUrl.startsWith('http')
+        ? h.thumbServerRelUrl
+        : `${location.origin}${h.thumbServerRelUrl}`;
+      const img = el('img', {
+        src: thumbUrl,
+        alt: `スライド ${h.slideNo} のサムネイル`,
+        style: 'max-width:320px;max-height:240px;border:1px solid var(--line);border-radius:var(--r-1);margin-top:var(--s-2);display:block',
+      }) as HTMLImageElement;
+      img.addEventListener('error', () => { img.style.display = 'none'; });
+      head.appendChild(img);
+    }
+    return head;
   }
 
   /** OneNote ページ用ヘッダ (件名/最終更新/ノートブック › セクション/チャンク)。 */
