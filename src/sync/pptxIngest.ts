@@ -66,24 +66,43 @@ export interface PptxIngestResult {
   failedSlides: number;
 }
 
+/** serverRelativeUrl からサイトコレクションのパス部分を取り出す。
+ *  /sites/<name>/... → /sites/<name>
+ *  /teams/<name>/... → /teams/<name>
+ *  /personal/<user>/... → /personal/<user>  (OneDrive 用)
+ *  その他 (ルートサイト) → '' (空文字)
+ *  SP REST は web スコープで呼ぶ必要があり、サイトコレクションを跨ぐと取得不可。
+ *  そのため siteUrl は origin + これを組合せた値にする。 */
+function siteCollectionPath(serverRel: string): string {
+  const m = serverRel.match(/^(\/(?:sites|teams|personal)\/[^/]+)/i);
+  return m ? m[1] : '';
+}
+
 /** 受け取った url (絶対 URL or serverRelativeUrl) を解決して、SP クライアントが
- *  期待する serverRelativeUrl と siteUrl を組み立てる。 */
+ *  期待する serverRelativeUrl と siteUrl (サイトコレクションスコープ) を組み立てる。 */
 function resolveSpFolder(folderUrl: string, fallbackSiteUrl: string): { siteUrl: string; folderServerRel: string } {
   const trimmed = folderUrl.trim();
   if (!trimmed) throw new Error('フォルダ URL が空です');
+  const folderServerRel = toServerRelativeUrl(trimmed);
+  // origin (https://host) を決める: 絶対 URL なら入力から、そうでなければ fallback から。
+  let origin = '';
   try {
     const u = new URL(trimmed);
-    // サイト URL は、SP サイトのパスまで含めるのが正規。少なくともプロトコル+ホストは取れる。
-    // SP の典型: https://contoso.sharepoint.com/sites/<site>/Shared%20Documents/...
-    // → サイト URL = "https://contoso.sharepoint.com" (テナント直下) でも _api は通る。
-    return {
-      siteUrl: `${u.protocol}//${u.host}`,
-      folderServerRel: toServerRelativeUrl(trimmed),
-    };
+    origin = `${u.protocol}//${u.host}`;
   } catch {
-    // 絶対 URL でないなら serverRelative とみなして、fallback の siteUrl と組合せる。
-    return { siteUrl: fallbackSiteUrl, folderServerRel: toServerRelativeUrl(trimmed) };
+    try {
+      const fb = new URL(fallbackSiteUrl);
+      origin = `${fb.protocol}//${fb.host}`;
+    } catch {
+      origin = fallbackSiteUrl.replace(/\/+$/, '').replace(/\/_api\/.*$/, '');
+    }
   }
+  // サイトコレクションを serverRelative から抽出し、origin と合体させる。
+  // これで /sites/foo/... へのアクセスは https://host/sites/foo/_api/web に行く。
+  const scPath = siteCollectionPath(folderServerRel);
+  const siteUrl = origin + scPath;
+  if (!folderServerRel) throw new Error(`フォルダ URL の serverRelativeUrl を解釈できませんでした: ${folderUrl}`);
+  return { siteUrl, folderServerRel };
 }
 
 /** PPTX ファイルだけに絞る (大文字小文字不問、隠しファイルとロックファイルを除外)。 */
