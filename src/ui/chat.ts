@@ -85,6 +85,10 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
   const input  = el('textarea', { class: 'tdr-note-input', placeholder: 'メーリングリストについて質問…', rows: '1' });
   const sendBtn = el('button', { class: 'tdr-note-submit', 'aria-label': '送信', html: icons.send(14) });
   const hintEl = el('div', { class: 'tdr-note-hint' }, ['']);
+  // 生成AI ベースのチャットである旨の定型免責表示。常時固定 (ChatGPT 等と同じ位置取り)。
+  const disclaimerEl = el('div', { class: 'tdr-disclaimer' }, [
+    'Tadori は生成 AI による回答のため、内容が正確とは限りません。重要な情報は出典メールで必ず確認してください。',
+  ]);
   const refreshHint = (): void => {
     hintEl.textContent = loadSettings().enterSends
       ? 'Enter で送信 / Shift+Enter で改行'
@@ -1260,6 +1264,7 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
         buildModelPicker(),
         el('div', { class: 'tdr-note-form' }, [input, sendBtn]),
         hintEl,
+        disclaimerEl,
       ]),
     ]),
   ]);

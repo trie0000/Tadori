@@ -183,6 +183,7 @@
 #tadori-root .tdr-suggest-chip{font:inherit;font-size:var(--fs-sm);color:var(--accent-strong);background:var(--accent-soft);border:1px solid transparent;border-radius:99px;padding:4px 12px;cursor:pointer;}
 #tadori-root .tdr-suggest-chip:hover{border-color:var(--accent-strong);}
 #tadori-root .tdr-note-hint{max-width:var(--thread-w);margin:var(--s-2) auto 0;font-size:var(--fs-xs);color:var(--ink-4);line-height:1;}
+#tadori-root .tdr-disclaimer{max-width:var(--thread-w);margin:var(--s-2) auto 0;font-size:var(--fs-xs);color:var(--ink-4);line-height:1.4;text-align:center;opacity:.85;}
 
 #tadori-root .tdr-pill{display:inline-flex;align-items:center;gap:var(--s-2);height:26px;padding:0 10px;font-size:var(--fs-sm);border-radius:99px;border:1px solid var(--line-strong);background:var(--paper-2);color:var(--ink-3);}
 #tadori-root .tdr-pill .dot{width:7px;height:7px;border-radius:50%;background:var(--ok);}
