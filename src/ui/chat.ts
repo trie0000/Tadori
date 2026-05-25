@@ -7,6 +7,10 @@ import { icons } from './icons';
 import { toast } from './toast';
 import { searchVectors, getThread } from '../search/vectorSearch';
 import { loadRules, matchesAnyRule } from '../search/exclusionRules';
+import {
+  ALL_SEARCH_KINDS, SEARCH_KIND_LABELS, SEARCH_KIND_ICON,
+  getSelectedKinds, setSelectedKinds, type SearchKind,
+} from '../search/searchKinds';
 import { htmlToText, renderMailBody, splitHtmlReplyHistory } from '../lib/mailhtml';
 import { cleanBody, splitReplyHistory } from '../lib/mailtext';
 import { generateAnswer, rerankByLLM, type RagSource, type ChatHistoryMsg, type OneNoteAppendSuggestion } from '../rag/client';
@@ -993,6 +997,7 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
         const raw = await searchVectors(q, s, siteUrl, topK, {
           vectorQuery: plan.vectorQuery,
           mustContain: plan.keywords,
+          kinds: activeKinds,  // ユーザがチップで選択中のソースだけ検索
         });
         const rules = loadRules();
         const afterExclude = rules.length ? raw.filter(h => !matchesAnyRule(h, rules)) : raw;
@@ -1326,6 +1331,66 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     return chip;
   }));
 
+  // ── 検索対象ソースの選択 (チップ + 「+」ボタン) ──
+  // 現在の選択を localStorage から読み、× / + で動的編集。submit 時に searchVectors へ渡す。
+  // デフォルト: 全 kind が対象。ユーザが × で外すと該当 kind を除外、+ で再追加。
+  let activeKinds: SearchKind[] = getSelectedKinds();
+  const sourceRow = el('div', { class: 'tdr-source-row', 'aria-label': '検索対象のソース' });
+  const renderSourceRow = (): void => {
+    sourceRow.replaceChildren();
+    sourceRow.appendChild(el('span', { class: 'tdr-source-label' }, ['検索対象:']));
+    if (activeKinds.length === 0) {
+      sourceRow.appendChild(el('span', { class: 'tdr-source-empty' }, [
+        '(検索対象なし — 質問しても 0 件)',
+      ]));
+    } else {
+      for (const k of activeKinds) {
+        const iconKey = SEARCH_KIND_ICON[k];
+        const chip = el('span', { class: `tdr-source-chip tdr-source-chip--${k}` }, [
+          el('span', { class: 'ic', html: icons[iconKey](12) }),
+          el('span', { class: 'lbl' }, [SEARCH_KIND_LABELS[k]]),
+        ]);
+        const rm = el('button', {
+          class: 'tdr-source-x',
+          'aria-label': `${SEARCH_KIND_LABELS[k]} を検索対象から外す`,
+          title: '検索対象から外す',
+          html: icons.close(10),
+        });
+        rm.addEventListener('click', () => {
+          activeKinds = activeKinds.filter(x => x !== k);
+          setSelectedKinds(activeKinds);
+          renderSourceRow();
+        });
+        chip.appendChild(rm);
+        sourceRow.appendChild(chip);
+      }
+    }
+    // 未追加の kind があれば「+ ソース追加」ボタンを表示
+    const inactive = ALL_SEARCH_KINDS.filter(k => !activeKinds.includes(k));
+    if (inactive.length > 0) {
+      const addBtn = el('button', {
+        class: 'tdr-source-add',
+        'aria-label': '検索対象を追加',
+        title: '検索対象に追加',
+      }, [
+        el('span', { html: icons.plus(12) }),
+        el('span', {}, ['追加']),
+      ]);
+      addBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openSourceAddMenu(addBtn, inactive, (k) => {
+          if (activeKinds.includes(k)) return;
+          // ALL_SEARCH_KINDS の順序を保って挿入 (mail → onenote → pptx)
+          activeKinds = ALL_SEARCH_KINDS.filter(x => activeKinds.includes(x) || x === k);
+          setSelectedKinds(activeKinds);
+          renderSourceRow();
+        });
+      });
+      sourceRow.appendChild(addBtn);
+    }
+  };
+  renderSourceRow();
+
   // ── レイアウト: 左ペイン | ドラッグ可能な仕切り | チャット ──
   thread.appendChild(emptyState);
   refreshList();
@@ -1345,6 +1410,7 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
     el('div', { class: 'tdr-composer' }, [
       el('div', { class: 'tdr-composer-inner' }, [
         chipsRow,
+        sourceRow,
         buildModelPicker(),
         el('div', { class: 'tdr-note-form' }, [input, sendBtn]),
         hintEl,
@@ -1354,6 +1420,52 @@ export function createChatPanel(root: HTMLElement, siteUrl: string): HTMLElement
   ]);
 
   return el('div', { class: 'tdr-main' }, [sidebar, divider, chatCol]);
+}
+
+/** 「+ 追加」ボタンの隣に表示する小さなメニュー (未追加 kind を 1 件選んで callback)。 */
+function openSourceAddMenu(anchor: HTMLElement, options: readonly SearchKind[], pick: (k: SearchKind) => void): void {
+  // 既存のメニューがあれば閉じる (二重起動防止)
+  document.querySelectorAll('.tdr-source-menu').forEach(m => m.remove());
+  const menu = el('div', { class: 'tdr-source-menu', role: 'menu' });
+  for (const k of options) {
+    const iconKey = SEARCH_KIND_ICON[k];
+    const item = el('button', { class: 'tdr-source-menu-item', role: 'menuitem' }, [
+      el('span', { class: 'ic', html: icons[iconKey](14) }),
+      el('span', {}, [SEARCH_KIND_LABELS[k]]),
+    ]);
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      menu.remove();
+      pick(k);
+    });
+    menu.appendChild(item);
+  }
+  // アンカーの真下に出す
+  document.body.appendChild(menu);
+  const r = anchor.getBoundingClientRect();
+  menu.style.position = 'fixed';
+  menu.style.left = `${r.left}px`;
+  menu.style.top  = `${r.bottom + 4}px`;
+  menu.style.zIndex = '2147483700';
+  // 外側クリック / Esc で閉じる
+  const onDoc = (e: Event): void => {
+    if (e.target instanceof Node && menu.contains(e.target)) return;
+    document.removeEventListener('mousedown', onDoc);
+    document.removeEventListener('keydown', onKey);
+    menu.remove();
+  };
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key === 'Escape') {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+      menu.remove();
+    }
+  };
+  // 同期で追加するとアンカーの click イベントで即閉じるので、次フレームで登録
+  requestAnimationFrame(() => {
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+  });
 }
 
 /** 入力ボックス上のモデル切替 (Spira と同じ作法)。社内AI + (開発者モード時) Claude。 */

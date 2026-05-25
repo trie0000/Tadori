@@ -186,6 +186,24 @@
 #tadori-root .tdr-suggest-chip{font:inherit;font-size:var(--fs-sm);color:var(--accent-strong);background:var(--accent-soft);border:1px solid transparent;border-radius:99px;padding:4px 12px;cursor:pointer;}
 #tadori-root .tdr-suggest-chip:hover{border-color:var(--accent-strong);}
 #tadori-root .tdr-note-hint{max-width:var(--thread-w);margin:var(--s-2) auto 0;font-size:var(--fs-xs);color:var(--ink-4);line-height:1;}
+
+/* 検索対象ソースの選択チップ列。チャット入力欄の真上に出す。 */
+#tadori-root .tdr-source-row{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-2);margin:0 0 var(--s-3);font-size:var(--fs-xs);}
+#tadori-root .tdr-source-label{color:var(--ink-4);margin-right:var(--s-1);}
+#tadori-root .tdr-source-empty{color:var(--warn,#b46f00);font-style:italic;}
+#tadori-root .tdr-source-chip{display:inline-flex;align-items:center;gap:6px;padding:3px 4px 3px 9px;border:1px solid var(--accent-strong);background:var(--accent-soft);color:var(--accent-strong);border-radius:99px;font-size:var(--fs-xs);line-height:1;}
+#tadori-root .tdr-source-chip .ic{display:inline-flex;}
+#tadori-root .tdr-source-chip .lbl{font-weight:600;}
+#tadori-root .tdr-source-x{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;border:none;background:transparent;color:var(--accent-strong);cursor:pointer;padding:0;margin-left:2px;}
+#tadori-root .tdr-source-x:hover{background:rgba(0,0,0,0.08);}
+#tadori-root .tdr-source-add{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border:1px dashed var(--line-strong);background:transparent;color:var(--ink-3);border-radius:99px;font-size:var(--fs-xs);font-family:inherit;cursor:pointer;line-height:1;}
+#tadori-root .tdr-source-add:hover{border-color:var(--accent-strong);color:var(--accent-strong);background:var(--accent-soft);}
+
+/* 「+ 追加」のポップアップメニュー */
+.tdr-source-menu{background:var(--paper,#fff);border:1px solid var(--line,#ccc);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,0.12);padding:4px;min-width:160px;display:flex;flex-direction:column;}
+.tdr-source-menu-item{display:flex;align-items:center;gap:8px;padding:8px 10px;background:transparent;border:none;font:inherit;color:var(--ink,#1f1f1f);cursor:pointer;text-align:left;border-radius:4px;}
+.tdr-source-menu-item:hover{background:var(--paper-2,#f5f5f3);}
+.tdr-source-menu-item .ic{display:inline-flex;color:var(--ink-4,#777);}
 #tadori-root .tdr-disclaimer{max-width:var(--thread-w);margin:var(--s-2) auto 0;font-size:var(--fs-xs);color:var(--ink-4);line-height:1.4;text-align:center;opacity:.85;}
 
 #tadori-root .tdr-pill{display:inline-flex;align-items:center;gap:var(--s-2);height:26px;padding:0 10px;font-size:var(--fs-sm);border-radius:99px;border:1px solid var(--line-strong);background:var(--paper-2);color:var(--ink-3);}

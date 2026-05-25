@@ -68,6 +68,10 @@ export interface SearchOptions {
   /** 検索結果のうち、これらの文字列を「すべて含む」レコードに絞る (大文字小文字無視 / 件名+本文)。
    *  空配列なら絞らない。完全一致が 0 件の時は厳密フィルタを外して通常検索にフォールバック。 */
   mustContain?: string[];
+  /** 検索対象とする kind を絞る (例: ['mail', 'onenote'] のみ)。
+   *  undefined または空配列なら絞らない (全 kind を対象)。
+   *  ユーザがチャットボックス近くの「+ ソース選択」UI で設定する。 */
+  kinds?: Array<'mail' | 'onenote' | 'doc' | 'pptx'>;
 }
 
 export async function searchVectors(
@@ -83,6 +87,8 @@ export async function searchVectors(
   const qvec = await embedQueryFor(vecQ, s);
   const excluded = getExcludedOneNotePageIds();
   const must = (opts.mustContain ?? []).filter(k => k.trim().length >= 2).map(k => k.toLowerCase());
+  // kind フィルタ (UI のソース選択チップから渡される)
+  const kindFilter = opts.kinds && opts.kinds.length > 0 ? new Set(opts.kinds) : null;
 
   // レコードが必須キーワードを「全部」含むかチェック (件名+本文を対象、大文字小文字無視)。
   const containsAll = (record: { subject: string; body: string }): boolean => {
@@ -106,6 +112,7 @@ export async function searchVectors(
   const runOnce = (applyMust: boolean): ReturnType<typeof eng.db.search> => {
     const raw = eng.db.search(qvec, pull, question, s.ragKeywordWeight)
       .filter(({ record }) => !(record.kind === 'onenote' && excluded.has(record.conversationId)))
+      .filter(({ record }) => !kindFilter || kindFilter.has(record.kind ?? 'mail'))
       .filter(({ record }) => !applyMust || containsAll(record));
     const seenPageIds = new Set<string>();
     const out: ReturnType<typeof eng.db.search> = [];
