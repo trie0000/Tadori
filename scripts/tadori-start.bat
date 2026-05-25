@@ -24,7 +24,17 @@ REM   Task Scheduler -> Create Basic Task -> Trigger "At log on"
 REM   Action: Start a program -> this .bat
 REM ============================================================================
 
-REM -WindowStyle Hidden could be used but we keep the window visible
-REM so the user sees the launcher progress (relay startup wait, etc.).
+REM Keep the window visible so the user sees the launcher progress
+REM (relay startup wait, errors, etc.).
+setlocal
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0tadori-start.ps1" %*
-REM Don't pause; the launcher closes itself after the popup is dismissed.
+set EC=%errorlevel%
+if not "%EC%"=="0" (
+    echo.
+    echo [tadori-start] ----------------------------------------------------------
+    echo [tadori-start] PowerShell exited with code %EC%
+    echo [tadori-start] See messages above for the cause.
+    echo [tadori-start] ----------------------------------------------------------
+    pause
+)
+endlocal
