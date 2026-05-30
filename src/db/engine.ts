@@ -3,7 +3,7 @@
 
 import { SharePointClient } from '../sharepoint/client';
 import { SpVectorStore } from '../sync/spStore';
-import { SegmentCache } from './cache';
+import { SegmentCache, deleteLegacyDb } from './cache';
 import { VectorDb } from './store';
 import { VectorSync } from '../sync/sync';
 
@@ -16,13 +16,18 @@ export interface Engine {
 }
 
 let engine: Engine | null = null;
+// 旧バージョンの非分離 'tadori' DB を 1 回だけ削除する (サイト間データ混入防止)。
+// 初回 getEngine 呼出時にバックグラウンドで実行。
+let legacyDeleted = false;
 
-/** siteUrl ごとのエンジンを返す。初回は一度同期してから返す。 */
+/** siteUrl ごとのエンジンを返す。初回は一度同期してから返す。
+ *  IndexedDB はサイトごとに分離 (cache.dbNameForSite)。 */
 export async function getEngine(siteUrl: string): Promise<Engine> {
   if (engine && engine.siteUrl === siteUrl) return engine;
+  if (!legacyDeleted) { legacyDeleted = true; void deleteLegacyDb(); }
   const db = new VectorDb();
   const store = new SpVectorStore(new SharePointClient(siteUrl));
-  const cache = new SegmentCache();
+  const cache = new SegmentCache(siteUrl);  // ← siteUrl を渡してサイト別 DB に
   const sync = new VectorSync(store, cache, db);
   engine = { db, store, cache, sync, siteUrl };
   await sync.sync();
