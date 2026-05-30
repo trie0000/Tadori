@@ -10,21 +10,13 @@
 // ブラウザのデータをクリアしてもらう運用)。
 
 import { type Segment, type Manifest, parseSegment, serializeSegment, parseManifest, serializeManifest } from '../sync/segments';
+import { siteHash } from '../sharepoint/spSites';
 
 /** 旧バージョン (サイト非分離) の DB 名。マイグレーション判定で参照する。 */
 const LEGACY_DB_NAME = 'tadori';
 const DB_VERSION = 1;
 const STORE_SEG = 'segments';   // key = segment id, value = JSON text
 const STORE_META = 'meta';      // key = 'manifest', value = JSON text
-
-/** siteUrl から安定したハッシュ文字列を生成 (DB 名の suffix 用)。
- *  暗号強度は不要なので軽量な djb2 + base36 で十分。 */
-function siteHash(siteUrl: string): string {
-  const s = (siteUrl || '').toLowerCase().replace(/\/+$/, '');
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
-  return (h >>> 0).toString(36); // unsigned 化して 36 進
-}
 
 /** サイトごとに分離した IndexedDB 名を返す。例: 'tadori-2vrxg9'  */
 export function dbNameForSite(siteUrl: string): string {

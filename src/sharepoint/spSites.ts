@@ -163,3 +163,13 @@ export function tenantOrigin(siteUrl?: string | null): string {
   const base = siteUrl || detectCurrentSiteUrl();
   try { return new URL(base).origin; } catch { return location.origin; }
 }
+
+/** siteUrl から安定したハッシュ文字列を生成 (localStorage / IndexedDB のキー suffix 用)。
+ *  暗号強度は不要なので djb2 + base36 の軽量実装。
+ *  大文字小文字無視 + 末尾スラッシュ無視で正規化してから計算。 */
+export function siteHash(siteUrl: string): string {
+  const s = (siteUrl || '').toLowerCase().replace(/\/+$/, '');
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}

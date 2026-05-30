@@ -1,16 +1,25 @@
-// PPTX マニュアル取り込みフォルダの設定 (localStorage)。
+// PPTX マニュアル取り込みフォルダの設定 (localStorage、サイト別)。
 // 1 設定 = 1 SP ドキュメントライブラリフォルダ。複数登録可。
 //
-// 各フォルダ単位で:
-//   - サブフォルダ再帰の有無
-//   - 前回同期時刻 (増分判定用ヒント)
-//   - 前回のファイル別最終更新時刻 (per-file 増分判定の真正値)
-// を保持する。per-file の精密な状態は SP の Tadori Sync List 側にも meta 行と
-// して書き、複数端末でも一貫性が取れる (このファイルは UI 表示の高速化用)。
+// ★ サイト分離 ★
+// 旧バージョン (タスク #44 まで) はキー 'tadori:pptx:folders' に
+// グローバル保存されていたため、サイトを切替えても同じ設定が見えていた。
+// 修正後は 'tadori:pptx:folders:<siteUrl ハッシュ>' でサイトごとに分離。
+//
+// マイグレーション: 起動時に旧グローバルキーがあれば、現在のサイトに移管 (1 回のみ)。
+// ※ 起動時にアクティブだったサイトに紐付くので、複数サイト運用していたユーザは
+//   別サイトで再追加が必要になる。代替案はないので割り切る。
 //
 // 設計参照: docs/pptx-rag-design.md §4.3
 
-const KEY = 'tadori:pptx:folders';
+import { siteHash } from '../sharepoint/spSites';
+
+const LEGACY_KEY = 'tadori:pptx:folders';
+const MIGRATED_KEY = 'tadori:pptx:folders:legacy-migrated';
+
+function keyFor(siteUrl: string): string {
+  return `tadori:pptx:folders:${siteHash(siteUrl)}`;
+}
 
 export interface PptxFolderConfig {
   /** 表示用 URL (絶対 URL or serverRelativeUrl。入力されたまま保持)。 */
@@ -25,25 +34,42 @@ export interface PptxFolderConfig {
   perFile: Record<string, string>;
 }
 
-function load(): PptxFolderConfig[] {
+/** 旧 'tadori:pptx:folders' グローバルキーを現在サイトのキーへ移管 (1 回だけ)。
+ *  既に移管済みなら何もしない。 */
+function migrateLegacy(siteUrl: string): void {
   try {
-    const raw = localStorage.getItem(KEY);
+    if (localStorage.getItem(MIGRATED_KEY)) return;
+    const legacy = localStorage.getItem(LEGACY_KEY);
+    if (!legacy) { localStorage.setItem(MIGRATED_KEY, '1'); return; }
+    const cur = localStorage.getItem(keyFor(siteUrl));
+    // 現在サイトに既設定があるなら上書きせず legacy を捨てる (安全側)
+    if (!cur) localStorage.setItem(keyFor(siteUrl), legacy);
+    localStorage.removeItem(LEGACY_KEY);
+    localStorage.setItem(MIGRATED_KEY, '1');
+    console.log('[tadori] pptx folders: legacy 設定を現在サイトへ移管しました');
+  } catch { /* noop */ }
+}
+
+function load(siteUrl: string): PptxFolderConfig[] {
+  try {
+    migrateLegacy(siteUrl);
+    const raw = localStorage.getItem(keyFor(siteUrl));
     if (!raw) return [];
     const arr = JSON.parse(raw) as PptxFolderConfig[];
     return Array.isArray(arr) ? arr : [];
   } catch { return []; }
 }
 
-function save(list: PptxFolderConfig[]): void {
-  try { localStorage.setItem(KEY, JSON.stringify(list)); } catch { /* quota */ }
+function save(siteUrl: string, list: PptxFolderConfig[]): void {
+  try { localStorage.setItem(keyFor(siteUrl), JSON.stringify(list)); } catch { /* quota */ }
 }
 
-export function listPptxFolders(): PptxFolderConfig[] {
-  return load();
+export function listPptxFolders(siteUrl: string): PptxFolderConfig[] {
+  return load(siteUrl);
 }
 
-export function addPptxFolder(cfg: Omit<PptxFolderConfig, 'lastSyncAt' | 'perFile'>): void {
-  const list = load();
+export function addPptxFolder(siteUrl: string, cfg: Omit<PptxFolderConfig, 'lastSyncAt' | 'perFile'>): void {
+  const list = load(siteUrl);
   // URL の重複は label を上書き
   const idx = list.findIndex(f => normalizeKey(f.url) === normalizeKey(cfg.url));
   if (idx >= 0) {
@@ -51,20 +77,20 @@ export function addPptxFolder(cfg: Omit<PptxFolderConfig, 'lastSyncAt' | 'perFil
   } else {
     list.push({ ...cfg, lastSyncAt: 0, perFile: {} });
   }
-  save(list);
+  save(siteUrl, list);
 }
 
-export function removePptxFolder(url: string): void {
-  const list = load().filter(f => normalizeKey(f.url) !== normalizeKey(url));
-  save(list);
+export function removePptxFolder(siteUrl: string, url: string): void {
+  const list = load(siteUrl).filter(f => normalizeKey(f.url) !== normalizeKey(url));
+  save(siteUrl, list);
 }
 
-export function updatePptxFolderSync(url: string, perFile: Record<string, string>): void {
-  const list = load();
+export function updatePptxFolderSync(siteUrl: string, url: string, perFile: Record<string, string>): void {
+  const list = load(siteUrl);
   const idx = list.findIndex(f => normalizeKey(f.url) === normalizeKey(url));
   if (idx < 0) return;
   list[idx] = { ...list[idx], lastSyncAt: Date.now(), perFile };
-  save(list);
+  save(siteUrl, list);
 }
 
 /** URL 比較用キー (末尾スラッシュ / URL エンコード差を吸収)。 */

@@ -813,7 +813,7 @@ function buildPptxImport(pane: HTMLElement, draft: RuntimeSettings, root: HTMLEl
 
   function renderList(): void {
     listEl.replaceChildren();
-    const folders = listPptxFolders();
+    const folders = listPptxFolders(siteUrl);
     if (folders.length === 0) {
       listEl.appendChild(el('div', { class: 'tdr-hint' }, ['まだ取り込みフォルダが登録されていません。']));
       syncAllBtn.disabled = true;
@@ -865,7 +865,7 @@ function buildPptxImport(pane: HTMLElement, draft: RuntimeSettings, root: HTMLEl
           message: `「${f.label || f.url}」の設定を削除します。\n(既に取り込み済みのスライドはベクトル DB に残ります。完全削除したい場合は同期前に SP から .pptx を消してください)`,
           primaryLabel: '削除',
           primaryVariant: 'danger',
-          onConfirm: () => { removePptxFolder(f.url); renderList(); toast(root, 'フォルダ設定を削除しました', 'ok'); },
+          onConfirm: () => { removePptxFolder(siteUrl, f.url); renderList(); toast(root, 'フォルダ設定を削除しました', 'ok'); },
         });
       });
       listEl.appendChild(card);
@@ -878,7 +878,7 @@ function buildPptxImport(pane: HTMLElement, draft: RuntimeSettings, root: HTMLEl
     if (!/^https?:\/\//i.test(url) && !url.startsWith('/')) {
       toast(root, 'URL は https://... か /sites/... の形式で入力してください', 'warn'); return;
     }
-    addPptxFolder({ url, label: labelInput.value.trim() || undefined, recursive: recursiveCb.checked });
+    addPptxFolder(siteUrl, { url, label: labelInput.value.trim() || undefined, recursive: recursiveCb.checked });
     urlInput.value = ''; labelInput.value = '';
     renderList();
     toast(root, 'フォルダを追加しました。「同期」ボタンで取り込みを開始してください', 'ok');
@@ -936,7 +936,7 @@ function buildPptxImport(pane: HTMLElement, draft: RuntimeSettings, root: HTMLEl
     }
   }
 
-  syncAllBtn.addEventListener('click', () => { void runSync(listPptxFolders()); });
+  syncAllBtn.addEventListener('click', () => { void runSync(listPptxFolders(siteUrl)); });
   stopBtn.addEventListener('click', () => { ac?.abort(); });
 
   pane.append(addRow, listEl, el('div', { style: 'display:flex;gap:var(--s-3);align-items:center;margin-top:var(--s-3)' }, [syncAllBtn, stopBtn]), bar, status);

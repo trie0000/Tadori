@@ -408,8 +408,10 @@ export async function syncPptxFolder(
     }
   }
 
-  // 5. perFile を保存
-  updatePptxFolderSync(folder.url, newPerFile);
+  // 5. perFile を保存 (現在の Tadori サイト = fallbackSiteUrl のキー配下に。
+  //    PPTX フォルダ URL の所属サイトと Tadori 起動サイトは別物の場合もあるが、
+  //    UI 設定は「Tadori を開いているサイト」に紐付くのが直感的)
+  updatePptxFolderSync(fallbackSiteUrl, folder.url, newPerFile);
 
   return {
     ingestedFiles,
